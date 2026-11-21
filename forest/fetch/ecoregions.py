@@ -14,9 +14,9 @@ from pathlib import Path
 
 import numpy as np
 
-from forest.config import REPO_ROOT
+from forest import config
 
-ECO_DIR = REPO_ROOT / "cache" / "ecoregions"
+ECO_DIR = config.CACHE_ROOT / "ecoregions"
 ZIP = ECO_DIR / "raw" / "Ecoregions2017.zip"
 REGION_BOUNDS = (-83.0, -5.0, -66.0, 14.0)  # Colombia incl. San Andrés, plus margin
 SIMPLIFY_DEG = 0.002  # ≈ 200 m, far finer than the source accuracy

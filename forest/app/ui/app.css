@@ -240,3 +240,5 @@ details.advanced > summary { cursor: pointer; font-weight: 600; }
 details.advanced[open] > summary { margin-bottom: 8px; }
 a.link { color: var(--accent); font-size: 12.5px; text-decoration: none; display: inline-block; margin-top: 4px; }
 a.link:hover { text-decoration: underline; }
+.hint.err { color: var(--err); }
+#dataSource { width: auto; color: var(--muted); font-size: 12px; }

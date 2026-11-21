@@ -17,19 +17,20 @@ sys.path.insert(0, str(ROOT))
 
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
-    """A fake project + fake X-Plane folder. Returns a namespace with useful paths."""
-    import forest.app.settings as settings
-    import forest.build as build
+    """A fake code folder, data folder (ns.root) and X-Plane folder. Returns a namespace with useful paths."""
+    import forest.assets.catalog as catalog
     import forest.config as config
     import forest.diskusage as diskusage
     import forest.fetch.ecoregions as eco
     import forest.fetch.osm_pbf as osm_pbf
     import forest.history as history
     import forest.jobs as jobs
-    import forest.paths as paths
     import forest.tiles as tiles
 
-    proj = tmp_path / "project"
+    repo = tmp_path / "repo"                 # the code folder (shipped defaults, bundled tools)
+    (repo / "config" / "profiles").mkdir(parents=True)
+    (repo / "config" / "rules").mkdir(parents=True)
+    proj = tmp_path / "data"                 # the data folder (~/.foreststudio)
     (proj / "config" / "profiles").mkdir(parents=True)
     (proj / "config" / "rules").mkdir(parents=True)
     cache = proj / "cache"
@@ -42,26 +43,33 @@ def sandbox(tmp_path, monkeypatch):
     (xp / "Resources" / "default scenery" / "1200 forests").mkdir(parents=True)
     (xp / "Resources" / "default scenery" / "1200 forests" / "library.txt").write_text("A\n1200\nLIBRARY\n")
     (xp / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data").mkdir(parents=True)
-    dsftool = proj / "tools" / "xptools" / "windows" / "DSFTool.exe"
+    dsftool = repo / "tools" / "xptools" / "windows" / "DSFTool.exe"
 
-    monkeypatch.setattr(config, "REPO_ROOT", proj)
+    monkeypatch.setattr(config, "REPO_ROOT", repo)
+    monkeypatch.setattr(config, "DEFAULTS_DIR", repo / "config")
+    monkeypatch.setattr(config, "DATA_ROOT", proj)
+    monkeypatch.setattr(config, "DATA_SOURCE", "custom")
+    monkeypatch.setattr(config, "DEFAULT_DATA_ROOT", tmp_path / "home" / ".foreststudio")
+    monkeypatch.setattr(config, "LOCATION_FILE", tmp_path / "home" / ".foreststudio" / "location.toml")
+    monkeypatch.delenv("FORESTSTUDIO_HOME", raising=False)
+    monkeypatch.setattr(config, "CACHE_ROOT", cache)
+    monkeypatch.setattr(config, "OUT_ROOT", out)
+    monkeypatch.setattr(config, "USER_CONFIG", proj / "config")
     monkeypatch.setattr(config, "LOCAL_TOML", proj / "config" / "local.toml")
     monkeypatch.setattr(config, "BUNDLED_DSFTOOL", dsftool)
     monkeypatch.setattr(tiles, "CACHE", cache / "tiles")
-    monkeypatch.setattr(paths, "REPO_ROOT", proj)
-    monkeypatch.setattr(build, "REPO_ROOT", proj)
     monkeypatch.setattr(jobs, "JOBS_DIR", cache / "jobs")
     monkeypatch.setattr(history, "HISTORY", cache / "history.jsonl")
-    monkeypatch.setattr(diskusage, "REPO_ROOT", proj)
     monkeypatch.setattr(diskusage, "CACHE", cache)
     monkeypatch.setattr(diskusage, "OUT", out)
+    monkeypatch.setattr(osm_pbf, "PBF_DIR", cache / "osm")
     monkeypatch.setattr(osm_pbf, "DEFAULT_PBF", cache / "osm" / "none.osm.pbf")
-    monkeypatch.setattr(settings, "PROFILES", proj / "config" / "profiles")
-    monkeypatch.setattr(settings, "RULES", proj / "config" / "rules")
     monkeypatch.setattr(eco, "ECO_DIR", cache / "ecoregions")
+    monkeypatch.setattr(eco, "ZIP", cache / "ecoregions" / "raw" / "Ecoregions2017.zip")
+    monkeypatch.setattr(catalog, "DEFAULT_CATALOG", proj / "config" / "catalog_xp12.json")
     try:
         import forest.app.api as api
-        monkeypatch.setattr(api, "REPO_ROOT", proj)
+        monkeypatch.setattr(api, "REPO_ROOT", repo)
         monkeypatch.setattr(api, "CACHE", cache / "tiles")
     except Exception:  # noqa: BLE001 - api imports pywebview-free modules only; keep tests running
         pass
@@ -72,7 +80,7 @@ def sandbox(tmp_path, monkeypatch):
 
     ns = NS()
     ns.root, ns.cache, ns.out, ns.xplane, ns.dsftool = proj, cache, out, xp, dsftool
-    ns.tmp = tmp_path
+    ns.tmp, ns.repo = tmp_path, repo
     return ns
 
 

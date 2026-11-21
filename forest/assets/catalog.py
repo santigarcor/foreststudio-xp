@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from forest import config as _config
 from forest.xplane.forest import read_forest
 from forest.xplane.library import parse_library
 
@@ -60,19 +61,21 @@ def build_catalog(forests_dir: Path) -> dict:
     return {"source": str(forests_dir), "count": len(entries), "forests": entries}
 
 
-DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "config" / "catalog_xp12.json"
+DEFAULT_CATALOG = _config.USER_CONFIG / "catalog_xp12.json"   # generated per machine
 
 
-def load_catalog(path: Path = DEFAULT_CATALOG) -> dict:
+def load_catalog(path: Path | None = None) -> dict:
     """The forest catalog. The default one is generated from the user's own X-Plane install
     the first time it is needed (it is not shipped in the repository)."""
-    if not path.exists() and path == DEFAULT_CATALOG:
-        ensure_catalog()
+    if path is None:
+        path = DEFAULT_CATALOG
+        if not path.exists():
+            ensure_catalog()
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def ensure_catalog(force: bool = False) -> bool:
-    """Build config/catalog_xp12.json from X-Plane's `1200 forests` library if missing.
+    """Build ~/.foreststudio/config/catalog_xp12.json from X-Plane's `1200 forests` library if missing.
     Returns False when X-Plane's location isn't set up yet (the app then asks for it)."""
     from forest import config
 
@@ -85,7 +88,7 @@ def ensure_catalog(force: bool = False) -> bool:
     return True
 
 
-def seasonal_assets(path: Path = DEFAULT_CATALOG) -> list[str]:
+def seasonal_assets(path: Path | None = None) -> list[str]:
     """Virtual paths that change art by season (avoid them in the tropics)."""
     return [f["virtual"] for f in load_catalog(path)["forests"] if f["seasons"]]
 

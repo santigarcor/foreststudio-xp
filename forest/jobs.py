@@ -17,9 +17,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 
-JOBS_DIR = REPO_ROOT / "cache" / "jobs"
+JOBS_DIR = config.CACHE_ROOT / "jobs"
 STEPS = ["data", "classify", "vectorise", "compile"]
 STEP_LABELS = {"data": "Data", "classify": "Classify", "vectorise": "Vectorise", "compile": "Compile"}
 

@@ -160,8 +160,8 @@
 <main id="view-disk" class="view page">
   <div class="page-inner">
     <div class="row between"><h2>Disk space</h2><button id="diskRefresh" class="ghost">Refresh</button></div>
-    <p class="hint">Everything ForestStudio stores lives in the project folder. X-Plane only has a link to the
-      built pack, so it takes no extra space there.</p>
+    <p class="hint">Everything ForestStudio downloads and builds lives in its data folder (<code>.foreststudio</code> in
+      your user folder). X-Plane only has a link to the built pack, so it takes no extra space there.</p>
     <div id="diskBody"></div>
   </div>
 </main>
@@ -170,8 +170,8 @@
 <main id="view-appsettings" class="view page">
   <div class="page-inner narrow">
     <h2>Settings</h2>
-    <p class="hint">Where X-Plane 12 is on this computer. Saved in <code>config/local.toml</code>
-      (not shared in git). ForestStudio only reads from X-Plane, except its own
+    <p class="hint">Where X-Plane 12 is on this computer. Saved in your data folder
+      (<code>.foreststudio/config/local.toml</code>). ForestStudio only reads from X-Plane, except its own
       <code>Custom Scenery/forest_*</code> link.</p>
     <div class="field">
       <div class="lbl"><span>X-Plane 12 folder</span></div>
@@ -181,6 +181,21 @@
     </div>
     <div class="row"><button id="setSave" class="primary">Save</button></div>
     <div id="setMsg" class="msg"></div>
+
+    <h3>Data folder</h3>
+    <p class="hint">Where ForestStudio keeps everything it downloads and builds: satellite and map data,
+      built tiles (X-Plane links to them), your profiles and forest types, and the build history.
+      It can take several GB, so you can put it on another drive. Default:
+      <code id="dataDefault"></code></p>
+    <div class="field">
+      <div class="lbl"><span>Folder</span><output id="dataSource"></output></div>
+      <div class="row"><input id="dataFolder" spellcheck="false" placeholder="e.g. D:\ForestStudio">
+        <button id="dataPick" class="ghost">Browse…</button><button id="dataDefaultBtn" class="ghost">Use default</button></div>
+      <div id="dataCheck" class="hint"></div>
+    </div>
+    <div class="row"><button id="dataApply" class="primary" disabled>Move data here</button>
+      <button id="dataRestart" class="ghost hidden">Restart now</button></div>
+    <div id="dataMsg" class="msg"></div>
     <h3>Setup checks</h3>
     <div id="setupChecks" class="checks"></div>
   </div>
@@ -196,7 +211,7 @@
     <p class="hint" id="delTiles"></p>
     <label class="chk"><input type="checkbox" id="delOutput" checked> <span id="delOutputTxt"></span></label>
     <label class="chk"><input type="checkbox" id="delCache"> <span id="delCacheTxt"></span></label>
-    <p class="hint" id="delNote">Deleted tiles disappear from X-Plane too (the pack is a link to the project)
+    <p class="hint" id="delNote">Deleted tiles disappear from X-Plane too (the pack is a link to ForestStudio's data folder)
       and show X-World / default forests again after restarting X-Plane. Downloaded data is fetched again
       automatically if you rebuild. This can't be undone.</p>
     <div id="delMsg" class="msg"></div>

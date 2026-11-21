@@ -11,9 +11,9 @@ import statistics
 import time
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 
-HISTORY = REPO_ROOT / "cache" / "history.jsonl"
+HISTORY = config.CACHE_ROOT / "history.jsonl"
 
 # Used until real measurements exist (from the first test tiles).
 DEFAULTS = {

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 from forest.tiles import Tile
 
 
@@ -18,7 +18,7 @@ def pack_name(region: str) -> str:
 
 
 def pack_root(region: str) -> Path:
-    return REPO_ROOT / "out" / pack_name(region)
+    return config.OUT_ROOT / pack_name(region)
 
 
 def dsf_path(region: str, tile: Tile) -> Path:
@@ -26,7 +26,7 @@ def dsf_path(region: str, tile: Tile) -> Path:
 
 
 def studio_dir(region: str) -> Path:
-    return REPO_ROOT / "out" / f"studio_{region}"
+    return config.OUT_ROOT / f"studio_{region}"
 
 
 def studio_path(region: str, tile: Tile, suffix: str) -> Path:

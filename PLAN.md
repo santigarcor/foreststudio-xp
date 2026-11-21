@@ -358,3 +358,17 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - **Earth Engine quotas and export times** for many tiles. Mitigation: per-tile caching and exporting at the coarsest resolution that's enough (20–30 m is often fine).
 - **Conflicts with X-World or Ortho4XP forests:** if layer order or exclusions are wrong, trees get drawn twice.
 - **Cloud cover over Colombia** affects any custom Sentinel-2 work. That's why we use composites and existing products first.
+
+### 2026-11-21 — Data folder moved out of the repository
+
+- Everything that changes now lives in `~/.foreststudio` (`config.DATA_ROOT`, override with
+  `FORESTSTUDIO_HOME`): `config/local.toml`, user profiles/rules (seeded from the repo defaults,
+  never overwritten), the generated catalog, `cache/` and `out/`. The repo is code + defaults only.
+- `forest/migrate.py` moves the old in-repo data on start (app and CLI) and re-points our
+  `Custom Scenery/forest_<region>` junction. Run on this PC: 3.0 GB moved (same drive, instant),
+  junction now → `~/.foreststudio/out/forest_colombia`, 34 tiles visible, 5/5 setup checks.
+- UI: DSFTool setting removed (bundled per platform), Build log tab removed (log lives in the
+  Build queue, stays open while it updates), app icon in the header.
+- Settings → **Data folder**: pick another folder (e.g. another drive) or go back to the default;
+  data is moved (or switched to an existing data folder), X-Plane links re-pointed, the choice kept in
+  `~/.foreststudio/location.toml`, then the app restarts. `FORESTSTUDIO_HOME` overrides and locks it.

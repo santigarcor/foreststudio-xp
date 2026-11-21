@@ -17,7 +17,7 @@ file is the authoritative summary; keep both up to date when something important
    default libraries…). ForestStudio only *reads* the X-Plane install. The one thing it creates
    there is its own folder link `Custom Scenery/forest_<region>` (a directory junction).
 2. **`scenery_packs.ini`**: change it only when the user asks. Back it up first
-   (`cache/backups/scenery_packs.ini.<timestamp>`) unless the user explicitly says not to.
+   (`~/.foreststudio/cache/backups/scenery_packs.ini.<timestamp>`) unless the user explicitly says not to.
 3. **Colombia uses evergreen forest assets only** (no `EXPORT_SEASON` variants, no `SEASONAL`
    textures). XP12's season rasters put the Andean highlands (1,500–2,500 m, e.g. Rionegro) in
    "winter" for ~6 months, so seasonal assets show bare trees. Colombia has no seasonal trees.
@@ -53,17 +53,43 @@ python -m venv .venv
   DSFTool 2.4.0-b1, Laminar Research, **MIT/X11** — see `tools/xptools/NOTICE.md`). macOS/Linux
   builds are to be added under `tools/xptools/macos|linux/` (the app picks the folder for its platform).
 - X-Plane location: **Settings** view (or auto-detected: `%LOCALAPPDATA%\x-plane_install_12.txt`,
-  Steam `libraryfolders.vdf`, common folders). Saved in `config/local.toml` (git-ignored).
+  Steam `libraryfolders.vdf`, common folders). Saved in `~/.foreststudio/config/local.toml`.
 - First run without a valid X-Plane folder opens the Settings view automatically.
+
+### Data folder (default `~/.foreststudio`; Settings → Data folder, or `FORESTSTUDIO_HOME`)
+
+The repository holds only code, the bundled DSFTool and the **default** profiles/rules. Everything
+that changes lives in `config.DATA_ROOT` (`%USERPROFILE%/.foreststudio`):
+
+| Path | What |
+|---|---|
+| `config/local.toml` | X-Plane location (Settings view) |
+| `config/profiles/*.toml`, `config/rules/*.toml` | the user's profiles / forest types; missing files are copied from the repo defaults on first use (`config.ensure_user_config`, never overwrites) |
+| `config/catalog_xp12.json` | forest catalog generated from this X-Plane |
+| `cache/` | `tiles/<tile>/`, `osm/` (country .pbf), `ecoregions/`, `jobs/`, `history.jsonl`, `backups/`, `decoded/` |
+| `out/` | `forest_<region>/` (the pack, junction target) and `studio_<region>/` (overlays, stats) |
+
+Use `config.CACHE_ROOT / OUT_ROOT / USER_CONFIG / profile_path() / rules_path()`; never write under
+`REPO_ROOT`. `forest/migrate.py` moves the old in-repo `cache/`, `out/`, `config/local.toml` and
+catalog into the data folder on start (app and CLI), never overwriting, and re-points our own
+`Custom Scenery/forest_<region>` junction. Done on this PC 2026-11-21 (3.0 GB, 34 tiles).
+
+Changing it: `config.resolve_data_root()` = `FORESTSTUDIO_HOME` (locks the setting) > the folder named
+in `~/.foreststudio/location.toml` (written by Settings; the only file left in the default folder) >
+the default. `forest/datafolder.py` checks a target (not inside the current folder, X-Plane or the
+program folder; drive present and writable; free space when crossing drives; a non-empty foreign
+folder gets a `ForestStudio` subfolder; a folder that already has data is *switched to*, nothing
+moved), moves every item without overwriting, re-points our junctions, writes `location.toml`, and
+the app restarts (`Api.restart_app`) because modules read their folders once at import.
 
 CLI (used by the app's job runner; handy for debugging):
 
 | Command | What it does |
 |---|---|
-| `forest catalog` | (Re)build `config/catalog_xp12.json` from X-Plane's `1200 forests` library |
+| `forest catalog` | (Re)build `~/.foreststudio/config/catalog_xp12.json` from X-Plane's `1200 forests` library |
 | `forest fetch --tiles +06-076,+06-075` | Satellite rasters per tile (4 downloads at a time) + OSM in **one** pass |
 | `forest build --tile +06-076 --profile medium --region colombia --compile [--keep-text] [--install]` | Build one tile; `--install` ensures the pack link exists |
-| `forest decode <file.dsf> [--label x]` | DSF → text into `cache/decoded/` (debug) |
+| `forest decode <file.dsf> [--label x]` | DSF → text into `<data>/cache/decoded/` (debug) |
 | `forest poc …` | Phase-0 proof of concept (three test squares near SKRG) |
 | `forest app` | Open the desktop app |
 
@@ -73,10 +99,11 @@ CLI (used by the app's job runner; handy for debugging):
 
 ```
 forest/
-  config.py        local.toml load/save, X-Plane & DSFTool auto-detect + validation
+  config.py        data-folder paths, local.toml load/save, X-Plane & DSFTool auto-detect + validation
+  migrate.py       one-time move of old in-repo data to ~/.foreststudio (+ junction re-point)
   tiles.py         Tile (1°×1°, name "+06-076", 10° folder "+00-080"), Grid (north-up raster)
                    Tile.cache creates the folder (write); Tile.cache_path never does (read/check)
-  paths.py         out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
+  paths.py         <data>/out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
                    out/studio_<region>/<tile>.{txt,stats.json,overlay.png,preview.png}
   fetch/
     rasters.py     ESA WorldCover 2021 (COG windows), Hansen GFC v1.12 treecover2000 + lossyear
@@ -100,14 +127,12 @@ forest/
   cli.py           command line
   app/             pywebview desktop app: main.py, api.py (js_api), settings.py (schemas,
                    validation, TOML writers), devserver.py (dev only), ui/{index.html,app.css,app.js,views.js}
-config/
-  profiles/{low,medium,high}.toml   performance profiles (editable in the app)
+config/                             DEFAULTS shipped with the app (user copies live in ~/.foreststudio/config)
+  profiles/{low,medium,high}.toml   performance profiles
   rules/colombia.toml               biomes, elevation bands, plantations, single-tree asset
-  local.example.toml                template for local.toml
-  catalog_xp12.json                 GENERATED per machine (git-ignored)
+  local.example.toml                template for ~/.foreststudio/config/local.toml
 tools/xptools/                      bundled DSFTool + license notes
 tests/                              pytest suite (sandboxed)
-cache/  out/                        data and build results (git-ignored)
 ```
 
 ### The build pipeline (per tile)
@@ -140,7 +165,7 @@ cache/  out/                        data and build results (git-ignored)
 
 ### Install model
 
-- The region pack `out/forest_<region>` is linked into X-Plane as **one directory junction**
+- The region pack `~/.foreststudio/out/forest_<region>` is linked into X-Plane as **one directory junction**
   `Custom Scenery/forest_<region>` (like OrthoStudio). No admin rights needed. Every built tile is
   in X-Plane immediately; uninstall removes only the junction. File symlinks are not possible on
   this PC (need Developer Mode/admin); hard links were used briefly and replaced by the junction.
@@ -158,7 +183,7 @@ cache/  out/                        data and build results (git-ignored)
 App job = `fetch --tiles all` (satellite downloads ×4 in parallel, OSM one pass) then a pool of
 N `build` subprocesses (N = Auto from `resources.auto_workers()`, measured peak ≈ 4.6 GB RAM for
 Medellín, 2.8 GB San Andrés; this PC 8 cores / 33 GB → Auto 3). Logs tagged `[tile]`; a failed
-tile doesn't stop others; cancel terminates all. Every job is saved in `cache/jobs/<id>.{json,log}`
+tile doesn't stop others; cancel terminates all. Every job is saved in `<data>/cache/jobs/<id>.{json,log}`
 with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by parsing log lines in
 `JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
 Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
@@ -183,7 +208,8 @@ Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
   per-step table, errors; delete job / clear all.
 - **Disk space**: usage by category (tile data, OSM country file, ecoregions, built pack, app
   files, job logs, leftovers), largest tiles, clean-ups (leftovers, data of unbuilt tiles, job history).
-- **Settings**: X-Plane 12 folder (Browse / Detect / live validation / Save). **No DSFTool setting**: the bundled one is used (`config.BUNDLED_DSFTOOL`); a hand-set `[tools] dsftool` in local.toml still overrides it if that file exists. Plus
+- **Settings**: X-Plane 12 folder (Browse / Detect / live validation / Save); **Data folder** (Browse /
+  Use default / live check / Move data here → Restart now). **No DSFTool setting**: the bundled one is used (`config.BUNDLED_DSFTOOL`); a hand-set `[tools] dsftool` in local.toml still overrides it if that file exists. Plus
   setup checks. Status bar: X-Plane path, checks (n/5), data kept, running job.
 - Header logo + favicon: `forest/app/ui/icon.svg` (copy of `forest/app/icons/foreststudio-xp.svg`; keep in sync).
 - UI convention: any button that calls a slow API goes through `busy(btn, "Working…", fn)` in
@@ -197,8 +223,8 @@ Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
 |---|---|---|
 | Land cover | ESA WorldCover 2021 v200, 10 m (AWS COG `…/ESA_WorldCover_10m_2021_v200_N06W078_Map.tif`, 3° tiles) | only the 1° window is read |
 | Tree cover / loss | Hansen GFC v1.12 (Google Storage, 10° tiles, strip-organised) | rows of the tile fetched |
-| OSM | Geofabrik `colombia-latest.osm.pbf` (~335 MB) in `cache/osm/` | ODbL; Overpass fallback timed out on whole tiles |
-| Biomes | RESOLVE Ecoregions 2017 (`storage.googleapis.com/teow2016/Ecoregions2017.zip`, 149 MB, CC-BY 4.0) | clipped to `cache/ecoregions/colombia.geojson` |
+| OSM | Geofabrik `colombia-latest.osm.pbf` (~335 MB) in `<data>/cache/osm/` | ODbL; Overpass fallback timed out on whole tiles |
+| Biomes | RESOLVE Ecoregions 2017 (`storage.googleapis.com/teow2016/Ecoregions2017.zip`, 149 MB, CC-BY 4.0) | clipped to `<data>/cache/ecoregions/colombia.geojson` |
 | Elevation | X-Plane 12 base mesh (`Global Scenery/…/+06-076.dsf`) via DSFTool | rows south→north in the raw raster |
 | Rejected | Meta/WRI 1 m canopy height (≈160 GB for Colombia, no overviews); ETH 10 m canopy (server rate-limited; parked) | tree height is parked |
 
@@ -256,7 +282,7 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 ## Testing
 
-- `tests/conftest.py` → `sandbox` fixture redirects project root, cache, out, jobs, history,
+- `tests/conftest.py` → `sandbox` fixture uses a temp code folder (`ns.repo`) and a temp data folder (`ns.root`) and redirects config paths, cache, out, jobs, history,
   profiles/rules, OSM file, ecoregions dir and the X-Plane folder to `tmp_path`.
 - Unit tests: tiles/paths, DSF writer (winding, params, bounds, rasters), polygon splitting,
   plantation matching, biomes, exclusions & coverage, settings validation/round-trips, catalog
@@ -271,7 +297,7 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 ## Conventions
 
-- Keep the X-Plane pack folder clean (only `.dsf`); app files go to `out/studio_<region>/`.
+- Keep the X-Plane pack folder clean (only `.dsf`); app files go to `<data>/out/studio_<region>/`.
 - New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION`
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.

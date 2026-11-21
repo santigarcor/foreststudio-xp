@@ -16,7 +16,7 @@ from forest import config
 from forest.app import settings as st
 from forest.assets.catalog import load_catalog
 from forest.build import OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SHADE
-from forest.config import REPO_ROOT
+from forest.config import REPO_ROOT  # the code folder (subprocess cwd); data is config.DATA_ROOT
 from forest.tiles import CACHE, Tile
 
 # Map extent offered in the tile picker (Colombia incl. San Andrés, plus margin).
@@ -50,15 +50,16 @@ class Job:
 
 class Api:
     def __init__(self) -> None:
-        from forest import jobs
+        from forest import jobs, migrate
 
+        self.migration = migrate.run()   # one-time: old in-repo cache/out/settings -> ~/.foreststudio
         self.job = Job()
         self.record = None          # forest.jobs.JobRecord of the running job
         jobs.mark_interrupted()     # jobs left "running" by a closed app
         self.reload()
 
     def reload(self) -> None:
-        """(Re)read config/local.toml and the forest catalog (after Settings change)."""
+        """(Re)read ~/.foreststudio/config/local.toml and the forest catalog (after Settings change)."""
         from forest.assets.catalog import ensure_catalog
 
         self.cfg = config.load()
@@ -130,6 +131,38 @@ class Api:
         except Exception:  # noqa: BLE001 - no window (dev server) or dialog unsupported
             return None
 
+    # ---------- data folder (where downloads, builds and settings live) ----------
+    def data_folder_info(self) -> dict:
+        from forest import datafolder
+        return datafolder.info()
+
+    def check_data_folder(self, folder: str) -> dict:
+        from forest import datafolder
+        return datafolder.check(folder)
+
+    def change_data_folder(self, folder: str) -> dict:
+        from forest import datafolder
+        if self.job.running:
+            return {"ok": False, "error": "A build is running; wait for it to finish."}
+        try:
+            return datafolder.change(folder)
+        except OSError as exc:
+            return {"ok": False, "error": f"Moving failed: {exc}. Nothing was lost; files already moved "
+                                          f"are in the new folder, the rest are still in the old one."}
+
+    def restart_app(self) -> dict:
+        """Start a fresh window (it reads the new data folder) and close this one."""
+        try:
+            import webview
+            win = webview.windows[0]
+        except Exception:  # noqa: BLE001 - dev server: no window to restart
+            return {"ok": False, "error": "Restart the app to use the new folder."}
+        from forest import proc as hidden
+
+        hidden.popen([sys.executable, "-m", "forest.app.main"], cwd=REPO_ROOT)  # pythonw: no console
+        win.destroy()
+        return {"ok": True}
+
     def setup_checks(self) -> dict:
         """Status line like OrthoStudio's: how many required checks pass."""
         from forest.fetch.osm_pbf import DEFAULT_PBF
@@ -138,8 +171,8 @@ class Api:
             "DSFTool": config.check_dsftool(self.cfg.dsftool)["ok"],
             "forest catalog": self.catalog_ok,
             "OSM country extract": DEFAULT_PBF.exists(),
-            "ecoregions map": (REPO_ROOT / "cache" / "ecoregions" / "colombia.geojson").exists()
-                              or (REPO_ROOT / "cache" / "ecoregions" / "raw" / "Ecoregions2017.zip").exists(),
+            "ecoregions map": (config.CACHE_ROOT / "ecoregions" / "colombia.geojson").exists()
+                              or (config.CACHE_ROOT / "ecoregions" / "raw" / "Ecoregions2017.zip").exists(),
         }
         return {"items": items, "ok": sum(items.values()), "total": len(items)}
 
@@ -162,7 +195,7 @@ class Api:
             "xplane_root": str(self.cfg.xplane_root),
             "dsftool_ok": self.cfg.dsftool.exists(),
             "setup": self.setup_checks(),
-            "osm_pbf": any((REPO_ROOT / "cache" / "osm").glob("*.osm.pbf")),
+            "osm_pbf": any((config.CACHE_ROOT / "osm").glob("*.osm.pbf")),
         }
 
     @staticmethod
@@ -231,7 +264,7 @@ class Api:
 
     # ---------- settings ----------
     def get_profile(self, name: str) -> dict:
-        return st.read_toml(st.PROFILES / f"{name}.toml")
+        return st.read_toml(config.profile_path(name))
 
     def save_profile(self, name: str, data: dict) -> dict:
         try:
@@ -241,7 +274,7 @@ class Api:
             return {"ok": False, "error": str(exc)}
 
     def get_rules(self, region: str) -> dict:
-        return st.read_toml(st.RULES / f"{region}.toml")
+        return st.read_toml(config.rules_path(region))
 
     def save_rules(self, region: str, data: dict) -> dict:
         try:
@@ -297,7 +330,7 @@ class Api:
 
     def delete_tiles(self, tiles: list[str], kinds: list[str], region: str = "colombia", pack: str = "") -> dict:
         """Delete built tiles ('output': the .dsf in the pack + the app's files) and/or their
-        downloaded data ('cache'). Only touches the project's out/ and cache/tiles/ folders;
+        downloaded data ('cache'). Only touches the data folder's out/ and cache/tiles/;
         the X-Plane side is just a link to out/, so a deleted tile disappears there too."""
         import shutil
 
@@ -312,7 +345,7 @@ class Api:
             ts = [Tile.parse(x) for x in tiles]
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
-        allowed = [(REPO_ROOT / "out").resolve(), CACHE.resolve()]
+        allowed = [config.OUT_ROOT.resolve(), CACHE.resolve()]
         removed = {k: 0 for k in kinds}
         for t in ts:
             files = self._tile_files(t, region)
@@ -379,7 +412,7 @@ class Api:
             "ok": True, "tiles": len(ts), "seconds": round(seconds), "workers": w,
             "download_tiles": len(need_rasters), "osm_pass": bool(need_osm),
             "cache_mb": round(cache_mb), "out_mb": round(out_mb), "install_mb": round(inst_mb),
-            "free_gb_project": free_gb(REPO_ROOT), "free_gb_xplane": free_gb(self.cfg.xplane_root),
+            "free_gb_project": free_gb(config.DATA_ROOT), "free_gb_xplane": free_gb(self.cfg.xplane_root),
             "measured": avg["samples"] > 0,
         }
 

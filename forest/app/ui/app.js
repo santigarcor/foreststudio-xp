@@ -616,7 +616,7 @@ async function init() {
     msg("#packMsg", r.message, !r.ok); await refreshStatus(); updateEstimate();
   };
   $("#packUninstall").onclick = async () => {
-    if (!confirm("Remove the forest pack from X-Plane? Your built tiles stay in the project; "
+    if (!confirm("Remove the forest pack from X-Plane? Your built tiles are kept; "
       + "X-Plane shows X-World / default forests again after a restart.")) return;
     const r = await api().uninstall_pack($("#region").value);
     msg("#packMsg", r.message, !r.ok); await refreshStatus(); updateEstimate();

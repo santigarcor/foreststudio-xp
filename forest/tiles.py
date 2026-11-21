@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 
-CACHE = REPO_ROOT / "cache" / "tiles"
+CACHE = config.CACHE_ROOT / "tiles"
 
 
 @dataclass(frozen=True)

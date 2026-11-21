@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from forest import config
-from forest.config import REPO_ROOT
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
@@ -37,7 +36,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
     cfg = config.load()
     src = Path(args.dsf)
     name = f"{args.label}_{src.stem}.txt" if args.label else src.stem + ".txt"
-    dst = REPO_ROOT / "cache" / "decoded" / name
+    dst = config.CACHE_ROOT / "decoded" / name
     dst.parent.mkdir(parents=True, exist_ok=True)
     return _run([str(cfg.dsftool), "--dsf2text", str(src), str(dst)])
 
@@ -179,15 +178,19 @@ def _run(cmd: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from forest import migrate
+
+    for note in migrate.run():   # one-time: old in-repo data -> ~/.foreststudio
+        print(f"[migrate] {note}", flush=True)
     p = argparse.ArgumentParser(prog="forest")
     sub = p.add_subparsers(required=True)
 
     c = sub.add_parser("catalog", help="catalog X-Plane 12 default forest assets")
-    c.add_argument("--out", default=str(REPO_ROOT / "config" / "catalog_xp12.json"))
+    c.add_argument("--out", default=str(config.USER_CONFIG / "catalog_xp12.json"))
     c.set_defaults(func=cmd_catalog)
 
     c = sub.add_parser("poc", help="write the Phase 0 test overlay for tile +06-076")
-    c.add_argument("--out", default=str(REPO_ROOT / "out" / "forest_poc"))
+    c.add_argument("--out", default=str(config.OUT_ROOT / "forest_poc"))
     c.add_argument("--density", type=int, default=200)
     c.add_argument("--compile", action="store_true", help="run DSFTool --text2dsf")
     c.add_argument("--season", choices=["spr", "sum", "fal", "win"],

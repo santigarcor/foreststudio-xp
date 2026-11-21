@@ -1,10 +1,10 @@
 """Install / uninstall a region's pack in X-Plane as ONE linked folder (like OrthoStudio).
 
-    X-Plane 12/Custom Scenery/forest_<region>  ──junction──▶  <project>/out/forest_<region>
+    X-Plane 12/Custom Scenery/forest_<region>  ──junction──▶  ~/.foreststudio/out/forest_<region>
 
 A directory junction needs no admin rights or Developer Mode. Every tile built into the
-project's pack folder is then in X-Plane at once; uninstalling removes only the junction,
-never the project's files. Only folders named forest_* are ever created or removed.
+data folder's pack is then in X-Plane at once; uninstalling removes only the junction,
+never ForestStudio's files. Only folders named forest_* are ever created or removed.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ def link_pack(region: str) -> dict:
     _winapi.CreateJunction(str(target), str(link))
     msg = f"linked {link} → {target}"
     if moved:
-        msg += f" (moved {len(moved)} tile(s) that only existed in X-Plane into the project)"
+        msg += f" (moved {len(moved)} tile(s) that only existed in X-Plane into ForestStudio's data folder)"
     return {"ok": True, "message": msg, **pack_status(region)}
 
 
@@ -113,8 +113,8 @@ def unlink_pack(region: str) -> dict:
     if not pack_name(region).startswith("forest_"):
         raise RuntimeError("only forest_* packs can be uninstalled")
     if _is_junction(link):
-        os.rmdir(link)  # removes the junction only; the project's pack folder is untouched
-        return {"ok": True, "message": f"removed link {link} (project files kept)", **pack_status(region)}
+        os.rmdir(link)  # removes the junction only; ForestStudio's pack folder is untouched
+        return {"ok": True, "message": f"removed link {link} (built tiles kept)", **pack_status(region)}
     if link.exists():
         return {"ok": False, "message": f"{link} is a real folder, not a link; leaving it alone",
                 **pack_status(region)}

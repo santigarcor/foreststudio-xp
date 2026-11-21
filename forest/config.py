@@ -1,21 +1,89 @@
-"""Local, per-machine configuration: where X-Plane 12 and DSFTool are.
+"""Where things live, and the per-machine configuration (where X-Plane 12 and DSFTool are).
 
-Stored in config/local.toml (not in git). When it doesn't exist, X-Plane is detected
-automatically (X-Plane's own install list, then Steam libraries) and DSFTool is looked for in
-the usual places inside the project. The app's Settings view edits and validates this file.
+The repository (REPO_ROOT) holds only code, the bundled DSFTool and the *default* profiles and
+rules (config/). Everything that changes lives in the user's data folder (DATA_ROOT):
+
+    ~/.foreststudio/            (override with the FORESTSTUDIO_HOME environment variable)
+        config/local.toml       X-Plane location (written by the Settings view)
+        config/profiles/*.toml  the user's profiles (copied from the defaults on first use)
+        config/rules/*.toml     the user's forest types per region (same)
+        config/catalog_xp12.json  X-Plane forest catalog, generated from this X-Plane
+        cache/                  downloads, per-tile data, job records, build history
+        out/                    built packs (linked into X-Plane) + the app's overlay/stats files
+
+When local.toml doesn't exist, X-Plane is detected automatically (X-Plane's own install list,
+then Steam libraries). DSFTool is the bundled one for this platform.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LOCAL_TOML = REPO_ROOT / "config" / "local.toml"
+DEFAULTS_DIR = REPO_ROOT / "config"          # shipped default profiles/ and rules/
+DEFAULT_DATA_ROOT = Path.home() / ".foreststudio"
+# When the user picks another data folder (Settings), this small file in the default folder
+# remembers where it is. It's the only thing left in the default folder then.
+LOCATION_FILE = DEFAULT_DATA_ROOT / "location.toml"
+
+
+def resolve_data_root() -> tuple[Path, str]:
+    """(folder, source): source is 'env' (FORESTSTUDIO_HOME), 'custom' (chosen in Settings) or
+    'default' (~/.foreststudio)."""
+    env = os.environ.get("FORESTSTUDIO_HOME")
+    if env:
+        return Path(env), "env"
+    try:
+        chosen = tomllib.loads(LOCATION_FILE.read_text(encoding="utf-8")).get("data_folder")
+        if chosen:
+            return Path(chosen), "custom"
+    except (OSError, tomllib.TOMLDecodeError):
+        pass
+    return DEFAULT_DATA_ROOT, "default"
+
+
+def write_location(folder: Path | None) -> None:
+    """Remember the chosen data folder (None or the default folder = forget the choice)."""
+    if folder is None or Path(folder).resolve() == DEFAULT_DATA_ROOT.resolve():
+        LOCATION_FILE.unlink(missing_ok=True)
+        return
+    LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOCATION_FILE.write_text("# ForestStudio XP keeps its data here (chosen in Settings).\n"
+                             f"data_folder = {json.dumps(str(Path(folder)))}\n",  # TOML basic string
+                             encoding="utf-8")
+
+
+DATA_ROOT, DATA_SOURCE = resolve_data_root()
+CACHE_ROOT = DATA_ROOT / "cache"
+OUT_ROOT = DATA_ROOT / "out"
+USER_CONFIG = DATA_ROOT / "config"
+LOCAL_TOML = USER_CONFIG / "local.toml"
+
+
+def ensure_user_config() -> Path:
+    """Copy any default profile/rules file the user doesn't have yet (never overwrites)."""
+    for sub in ("profiles", "rules"):
+        dst = USER_CONFIG / sub
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in sorted((DEFAULTS_DIR / sub).glob("*.toml")):
+            if not (dst / f.name).exists():
+                shutil.copy2(f, dst / f.name)
+    return USER_CONFIG
+
+
+def profile_path(name: str) -> Path:
+    return ensure_user_config() / "profiles" / f"{name}.toml"
+
+
+def rules_path(region: str) -> Path:
+    return ensure_user_config() / "rules" / f"{region}.toml"
 DSFTOOL_EXE = "DSFTool.exe" if sys.platform == "win32" else "DSFTool"
 
 

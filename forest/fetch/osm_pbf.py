@@ -24,10 +24,10 @@ from pathlib import Path
 
 import osmium
 
-from forest.config import REPO_ROOT
+from forest import config
 from forest.tiles import Tile
 
-PBF_DIR = REPO_ROOT / "cache" / "osm"
+PBF_DIR = config.CACHE_ROOT / "osm"
 DEFAULT_PBF = PBF_DIR / "colombia-latest.osm.pbf"
 VERSION = 3  # bump when the set of extracted features changes (old caches are re-extracted)
 

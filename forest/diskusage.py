@@ -1,6 +1,6 @@
 """How much disk ForestStudio uses, by category, and safe clean-up actions.
 
-Everything lives inside the project folder (cache/ and out/). The X-Plane side is only a
+Everything lives in the data folder (~/.foreststudio: cache/ and out/). The X-Plane side is only a
 folder link to out/forest_<region>, so it takes no space of its own.
 """
 
@@ -9,10 +9,10 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 
-CACHE = REPO_ROOT / "cache"
-OUT = REPO_ROOT / "out"
+CACHE = config.CACHE_ROOT
+OUT = config.OUT_ROOT
 
 
 def _size(p: Path) -> int:
@@ -89,13 +89,13 @@ def usage() -> dict:
     ]
     total = sum(c["mb"] for c in cats if c["key"] != "leftovers") + next(c["mb"] for c in cats if c["key"] == "leftovers")
     try:
-        free = round(shutil.disk_usage(REPO_ROOT).free / 1e9, 1)
-        disk_total = round(shutil.disk_usage(REPO_ROOT).total / 1e9, 1)
+        free = round(shutil.disk_usage(config.DATA_ROOT).free / 1e9, 1)
+        disk_total = round(shutil.disk_usage(config.DATA_ROOT).total / 1e9, 1)
     except OSError:
         free = disk_total = None
     return {
         "total_mb": round(total, 1), "categories": cats, "largest_tiles": per_tile[:15],
-        "free_gb": free, "disk_total_gb": disk_total, "project": str(REPO_ROOT),
+        "free_gb": free, "disk_total_gb": disk_total, "project": str(config.DATA_ROOT),
         "cleanable": {
             "leftovers": {"items": len(left), "mb": _mb(sum(_size(p) for p in left))},
             "unbuilt_tile_data": {"items": len(unbuilt), "mb": _mb(sum(_size(p) for p in unbuilt))},
@@ -104,7 +104,7 @@ def usage() -> dict:
 
 
 def clean(kind: str) -> dict:
-    """Delete one cleanable category. Only ever touches cache/ and out/ inside the project."""
+    """Delete one cleanable category. Only ever touches cache/ and out/ inside the data folder."""
     if kind == "leftovers":
         targets = _leftovers()
     elif kind == "unbuilt_tile_data":
@@ -116,7 +116,7 @@ def clean(kind: str) -> dict:
     for p in targets:
         rp = p.parent.resolve() / p.name
         if not any(rp.is_relative_to(a) for a in allowed):
-            return {"ok": False, "error": f"refusing to delete outside the project: {p}"}
+            return {"ok": False, "error": f"refusing to delete outside the data folder: {p}"}
         freed += _size(p)
         if p.is_dir():
             shutil.rmtree(p)

@@ -253,7 +253,51 @@ async function liveCheck() {
   }, 250);
 }
 
+/* ---------------- data folder ---------------- */
+let dataInfo = null, dataTimer = null, dataPlan = null;
+const SOURCE_TXT = { default: "default", custom: "chosen by you", env: "set by FORESTSTUDIO_HOME" };
+
+async function loadDataFolder() {
+  dataInfo = await api().data_folder_info();
+  $("#dataDefault").textContent = dataInfo.default;
+  $("#dataFolder").value = dataInfo.current;
+  $("#dataSource").textContent = SOURCE_TXT[dataInfo.source] || "";
+  for (const id of ["#dataFolder", "#dataPick", "#dataDefaultBtn"]) $(id).disabled = dataInfo.locked;
+  $("#dataDefaultBtn").disabled = dataInfo.locked || dataInfo.is_default;
+  $("#dataCheck").textContent = dataInfo.locked ? "Remove the FORESTSTUDIO_HOME environment variable to change it here." : "";
+  $("#dataApply").disabled = true; dataPlan = null;
+}
+
+function checkDataFolder() {
+  clearTimeout(dataTimer);
+  $("#dataApply").disabled = true; dataPlan = null;
+  dataTimer = setTimeout(async () => {
+    const r = await api().check_data_folder($("#dataFolder").value);
+    const box = $("#dataCheck"); box.className = "hint " + (r.ok ? "" : "err");
+    if (!r.ok) { box.textContent = "✗ " + r.error; return; }
+    if (r.same) { box.textContent = r.message; return; }
+    box.textContent = (r.note ? r.note + " " : "") + r.message;
+    $("#dataApply").textContent = r.has_data ? "Switch to this folder" : "Move data here";
+    $("#dataApply").disabled = false; dataPlan = r;
+  }, 300);
+}
+
+async function applyDataFolder() {
+  if (!dataPlan) return;
+  const what = dataPlan.has_data ? `Switch ForestStudio to the data in\n${dataPlan.target}?`
+    : `Move your data (${dataPlan.size_gb} GB) to\n${dataPlan.target}?`;
+  if (!confirm(`${what}\n\nThe X-Plane pack link is updated too. ForestStudio restarts afterwards.`)) return;
+  const r = await busy($("#dataApply"), dataPlan.has_data ? "Switching…" : "Moving…",
+    () => api().change_data_folder($("#dataFolder").value));
+  if (!r.ok) { msg("#dataMsg", r.error, true); return; }
+  msg("#dataMsg", `Done: ${r.notes.join(" · ")}. Restart ForestStudio to use the new folder.`);
+  $("#dataApply").disabled = true;
+  for (const id of ["#dataFolder", "#dataPick", "#dataDefaultBtn"]) $(id).disabled = true;
+  $("#dataRestart").classList.remove("hidden");
+}
+
 async function loadAppSettings() {
+  loadDataFolder();
   const s = await api().get_app_settings();
   $("#setXp").value = s.xplane_root;
   renderChecks($("#setXpCheck"), s.xplane_check, "X-Plane 12 found (Custom Scenery, forest library and base mesh present)");
@@ -272,6 +316,15 @@ async function initViews() {
   };
   $("#diskRefresh").onclick = () => busy($("#diskRefresh"), "Refreshing…", refreshDisk);
   $("#setXp").oninput = liveCheck;
+  $("#dataFolder").oninput = checkDataFolder;
+  $("#dataPick").onclick = async () => { const p = await api().pick_path("folder");
+    if (p) { $("#dataFolder").value = p; checkDataFolder(); } else msg("#dataMsg", "Browse works in the desktop app; type or paste the path here.", true); };
+  $("#dataDefaultBtn").onclick = () => { $("#dataFolder").value = dataInfo.default; checkDataFolder(); };
+  $("#dataApply").onclick = applyDataFolder;
+  $("#dataRestart").onclick = () => busy($("#dataRestart"), "Restarting…", async () => {
+    const r = await api().restart_app();
+    if (!r.ok) msg("#dataMsg", r.error, true);
+  });
   $("#setXpPick").onclick = async () => { const p = await api().pick_path("folder");
     if (p) { $("#setXp").value = p; liveCheck(); } else msg("#setMsg", "Browse works in the desktop app; type or paste the path here.", true); };
   $("#setXpDetect").onclick = () => busy($("#setXpDetect"), "Detecting…", async () => { const s = await api().get_app_settings();

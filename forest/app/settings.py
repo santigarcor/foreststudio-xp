@@ -6,10 +6,18 @@ import re
 import tomllib
 from pathlib import Path
 
-from forest.config import REPO_ROOT
+from forest import config
 
-PROFILES = REPO_ROOT / "config" / "profiles"
-RULES = REPO_ROOT / "config" / "rules"
+
+def profiles_dir() -> Path:
+    """The user's profiles (~/.foreststudio/config/profiles), seeded from the defaults."""
+    return config.ensure_user_config() / "profiles"
+
+
+def rules_dir() -> Path:
+    return config.ensure_user_config() / "rules"
+
+
 NAME_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 # key: (type, min, max, step, group, label, help)
@@ -108,11 +116,11 @@ DENSITY_LEVELS_HELP = (
 
 
 def list_profiles() -> list[str]:
-    return sorted(p.stem for p in PROFILES.glob("*.toml"))
+    return sorted(p.stem for p in profiles_dir().glob("*.toml"))
 
 
 def list_regions() -> list[str]:
-    return sorted(p.stem for p in RULES.glob("*.toml"))
+    return sorted(p.stem for p in rules_dir().glob("*.toml"))
 
 
 def read_toml(path: Path) -> dict:
@@ -151,7 +159,7 @@ def write_profile(name: str, data: dict) -> Path:
     for key, (_t, _lo, _hi, _s, _g, label, help_) in PROFILE_SCHEMA.items():
         lines.append(f"{key} = {_num(d[key])}  # {label}: {help_}")
     lines.append("density_levels = [" + ", ".join(_num(x) for x in d["density_levels"]) + "]")
-    path = PROFILES / f"{name}.toml"
+    path = profiles_dir() / f"{name}.toml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -250,6 +258,6 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
         for b in bm["band"]:
             lines += ["[[biome.band]]", f"name = {_q(b['name'])}", f"elev_max = {_num(b['elev_max'])}",
                       f"dense = {_q(b['dense'])}", f"sparse = {_q(b['sparse'])}"]
-    path = RULES / f"{region}.toml"
+    path = rules_dir() / f"{region}.toml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

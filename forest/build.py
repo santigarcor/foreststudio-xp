@@ -29,7 +29,7 @@ from shapely.geometry import Polygon, box, shape
 from shapely.geometry.polygon import orient
 
 from forest.assets.catalog import load_catalog
-from forest.config import REPO_ROOT
+from forest import config
 from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile
 from forest.exclusions import coverage_mask, exclusion_mask, osm_geometries, osm_tree_hints
 from forest.fetch.elevation import elevation_on_grid
@@ -50,8 +50,8 @@ class Settings:
     @classmethod
     def load(cls, profile: str, region: str) -> "Settings":
         return cls(
-            profile=_toml(REPO_ROOT / "config" / "profiles" / f"{profile}.toml"),
-            rules=_toml(REPO_ROOT / "config" / "rules" / f"{region}.toml"),
+            profile=_toml(config.profile_path(profile)),
+            rules=_toml(config.rules_path(region)),
         )
 
 
