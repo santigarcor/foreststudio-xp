@@ -1,0 +1,255 @@
+"""Profile / rules schema, validation and TOML writing (tomllib only reads)."""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path
+
+from forest.config import REPO_ROOT
+
+PROFILES = REPO_ROOT / "config" / "profiles"
+RULES = REPO_ROOT / "config" / "rules"
+NAME_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+
+# key: (type, min, max, step, group, label, help)
+PROFILE_SCHEMA: dict[str, tuple] = {
+    "min_tree_frac": (float, 0.2, 0.9, 0.05, "Where trees go", "How much forest a spot needs",
+                      "The satellite map says how much of each ~18 m square is trees. A square gets "
+                      "trees only if at least this share is forest. 0.5 = half. Lower = more trees, "
+                      "also on hedges and lone trees; higher = only solid forest."),
+    "recent_loss_from": (int, 1, 24, 1, "Where trees go", "Ignore forest cut since year",
+                         "Forest that satellite data shows was cut down from this year on is left "
+                         "empty. 21 = since 2021, 1 = since 2001 (removes much more)."),
+    "smooth_passes": (int, 0, 5, 1, "Where trees go", "Tidy-up passes",
+                      "Each pass removes lone specks of forest and fills tiny holes, so forests "
+                      "have cleaner shapes. More passes = rounder, simpler forests, fewer details."),
+    "min_area_m2": (int, 0, 30000, 500, "Where trees go", "Smallest forest kept (m²)",
+                    "Forest patches smaller than this are dropped. 3000 m² ≈ a 55 × 55 m patch. "
+                    "Higher = fewer small groves, better performance."),
+    "road_clearance_scale": (float, 0.0, 2.0, 0.1, "Clearances", "Road clearance",
+                             "How wide the tree-free strip along roads is. 1.0 ≈ the paved road plus "
+                             "~1 m (e.g. 8 m for a residential street, 24 m for a motorway). "
+                             "0.5 = half, lets street trees touch the road; 0 = ignore roads."),
+    "building_clearance_m": (float, 0.0, 10.0, 0.5, "Clearances", "Building clearance (m)",
+                             "Tree-free margin around each building outline. 0 = trees can stand "
+                             "right next to walls; 2 m keeps tree crowns off most roofs."),
+    "cutout_min_cover": (float, 0.1, 1.0, 0.05, "Clearances", "Clear a spot when roads/buildings cover",
+                         "A ~18 m spot loses its trees only if roads, buildings etc. cover at least "
+                         "this share of it. 0.5 = half. Lower = clears more (cleaner streets, "
+                         "fewer city trees); higher = keeps more trees between buildings."),
+    "runway_clearance_m": (int, 0, 200, 5, "Clearances", "Runway clear strip (m)",
+                           "Trees are kept this far from a runway's centre line (each side). "
+                           "Taxiways and aprons get a ~20 m margin. 75 m ≈ an ICAO runway strip."),
+    "clear_airport_grounds": (int, 0, 1, 1, "Clearances", "Clear whole airport grounds (0/1)",
+                              "1 = no trees anywhere inside the airport boundary from OpenStreetMap. "
+                              "0 = keep real trees on the grounds (only runways, taxiways and aprons "
+                              "are cleared)."),
+    "osm_green_min_frac": (float, 0.05, 0.9, 0.05, "OpenStreetMap trees", "Tree share needed in parks & golf",
+                           "Inside OSM parks, gardens, golf courses and woods, a spot gets trees at this "
+                           "lower satellite tree share (normal: 'How much forest a spot needs'). The "
+                           "satellite map misses tree lines and scattered trees in these places."),
+    "osm_single_trees": (int, 0, 1, 1, "OpenStreetMap trees", "Place OSM single trees (0/1)",
+                         "1 = put a tree on every tree mapped individually in OpenStreetMap "
+                         "(street trees, gardens, golf). Skipped inside buildings, runway strips and "
+                         "existing forest."),
+    "osm_tree_rows": (int, 0, 1, 1, "OpenStreetMap trees", "Place OSM tree rows (0/1)",
+                      "1 = plant trees along every tree row mapped in OpenStreetMap "
+                      "(avenues, windbreaks, field edges)."),
+    "tile_tree_budget": (int, 1_000_000, 100_000_000, 1_000_000, "Density & performance", "Max trees per tile",
+                         "The main frame-rate setting. If a tile would have more trees than this, "
+                         "all its forests are thinned evenly until it fits. 30 M is a medium value."),
+    "global_density": (float, 0.1, 1.0, 0.05, "Density & performance", "Overall thickness",
+                       "Thins every forest by this factor before the max-trees limit. "
+                       "1.0 = as thick as X-Plane's forest allows, 0.5 = half the trees."),
+    "density_blur_cells": (float, 0.0, 6.0, 0.5, "Density & performance", "Soften thickness changes",
+                           "Blends thick and thin forest into each other so there are fewer sharp "
+                           "steps. Higher = smoother transitions and fewer forest pieces."),
+    "grid_cells": (int, 2000, 12000, 500, "Detail", "Map detail",
+                   "How finely the tile is analysed. 6000 = squares of ~18 m. Higher = forest "
+                   "edges follow roads and fields more closely, but bigger files and slower builds."),
+    "simplify_m": (int, 0, 40, 1, "Detail", "Edge smoothing (m)",
+                   "Straightens forest edges by up to this distance, removing the blocky "
+                   "'staircase' look. About 2/3 of the map detail square works well (12 m at 6000)."),
+    "chunks_per_degree": (int, 4, 32, 4, "Detail", "Split forests into pieces",
+                          "Big forests are cut into square pieces so X-Plane can skip the ones you "
+                          "can't see. 16 = pieces of ~7 km. Rarely needs changing."),
+}
+# How much each setting changes frame rate in X-Plane (trees drawn), shown as a badge.
+# high = directly sets the number of trees; medium = changes forest area or tree count a bit;
+# low = small effect; none = only file size / loading / build time.
+FPS_IMPACT = {
+    "tile_tree_budget": "high",
+    "global_density": "high",
+    "min_tree_frac": "medium",
+    "min_area_m2": "low",
+    "smooth_passes": "low",
+    "road_clearance_scale": "low",
+    "building_clearance_m": "low",
+    "cutout_min_cover": "low",
+    "density_blur_cells": "low",
+    "density_levels": "low",
+    "recent_loss_from": "low",
+    "osm_green_min_frac": "low",
+    "osm_single_trees": "low",
+    "osm_tree_rows": "low",
+    "runway_clearance_m": "none",
+    "clear_airport_grounds": "none",
+    "grid_cells": "none",
+    "simplify_m": "none",
+    "chunks_per_degree": "none",
+}
+
+DENSITY_LEVELS_HELP = (
+    "Forest thickness is rounded to these steps (1.0 = full). Three steps "
+    "(0.35, 0.65, 1.0) means thin, medium and thick forest. Fewer steps = fewer forest "
+    "pieces and better performance; more steps = finer variation."
+)
+
+
+def list_profiles() -> list[str]:
+    return sorted(p.stem for p in PROFILES.glob("*.toml"))
+
+
+def list_regions() -> list[str]:
+    return sorted(p.stem for p in RULES.glob("*.toml"))
+
+
+def read_toml(path: Path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _num(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return f"{v:_}" if abs(v) >= 100_000 else str(v)
+    return repr(round(float(v), 4))
+
+
+def validate_profile(data: dict) -> dict:
+    out: dict = {}
+    for key, (typ, lo, hi, _step, *_rest) in PROFILE_SCHEMA.items():
+        if key not in data:
+            raise ValueError(f"missing {key}")
+        v = typ(data[key])
+        if not lo <= v <= hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
+        out[key] = v
+    levels = sorted(float(x) for x in data.get("density_levels", []))
+    if not levels or not all(0 < x <= 1 for x in levels) or len(levels) > 8:
+        raise ValueError("density_levels: 1-8 values in (0, 1]")
+    out["density_levels"] = levels
+    return out
+
+
+def write_profile(name: str, data: dict) -> Path:
+    if not NAME_RE.match(name):
+        raise ValueError("profile name: lowercase letters, digits, - and _")
+    d = validate_profile(data)
+    lines = ["# Forest Studio performance profile (written by the app).", ""]
+    for key, (_t, _lo, _hi, _s, _g, label, help_) in PROFILE_SCHEMA.items():
+        lines.append(f"{key} = {_num(d[key])}  # {label}: {help_}")
+    lines.append("density_levels = [" + ", ".join(_num(x) for x in d["density_levels"]) + "]")
+    path = PROFILES / f"{name}.toml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _validate_bands(bands_in: list, evergreen: set[str], where: str) -> list[dict]:
+    bands, last = [], -1e9
+    for b in bands_in:
+        name = str(b["name"]).strip() or "band"
+        em = float(b["elev_max"])
+        if em <= last:
+            raise ValueError(f"{where}: band upper elevations must increase")
+        last = em
+        for k in ("dense", "sparse"):
+            if b[k] not in evergreen:
+                raise ValueError(f"{where} / {name} / {k}: {b[k]} is not an evergreen forest asset")
+        bands.append({"name": name, "elev_max": em, "dense": b["dense"], "sparse": b["sparse"]})
+    if not bands:
+        raise ValueError(f"{where}: at least one band")
+    return bands
+
+
+def validate_rules(data: dict, evergreen: set[str]) -> dict:
+    sb = float(data["sparse_below"])
+    if not 0 <= sb <= 1:
+        raise ValueError("sparse_below must be 0-1")
+    biomes_in = data.get("biome") or [{"name": "default", "label": "All", "color": [60, 160, 70],
+                                       "ecoregions": [], "band": data.get("band", [])}]
+    biomes, seen = [], set()
+    for bm in biomes_in:
+        name = str(bm["name"]).strip()
+        if not NAME_RE.match(name.replace(" ", "_")):
+            raise ValueError(f"biome name {name!r}: lowercase letters, digits, - and _")
+        if name in seen:
+            raise ValueError(f"duplicate biome {name}")
+        seen.add(name)
+        color = [max(0, min(255, int(x))) for x in bm.get("color", [60, 160, 70])][:3]
+        ecos = [str(e) for e in bm.get("ecoregions", [])]
+        biomes.append({"name": name, "label": str(bm.get("label", name)), "color": color,
+                       "ecoregions": ecos, "band": _validate_bands(bm["band"], evergreen, name)})
+    if "default" not in seen:
+        raise ValueError('a biome named "default" is required (used for unlisted ecoregions)')
+    single = data.get("single_tree") or biomes[0]["band"][0]["dense"]
+    if single not in evergreen:
+        raise ValueError(f"single_tree: {single} is not an evergreen forest asset")
+    plants, pseen = [], set()
+    for pr in data.get("plantation", []):
+        name = str(pr["name"]).strip()
+        if not NAME_RE.match(name) or name in pseen:
+            raise ValueError(f"plantation name {name!r}: unique, lowercase letters, digits, - and _")
+        pseen.add(name)
+        asset = str(pr.get("asset") or "")
+        if asset and asset not in evergreen:
+            raise ValueError(f"plantation {name}: {asset} is not an evergreen forest asset")
+        match = [str(m).strip() for m in pr.get("match", []) if str(m).strip()]
+        if not match or not all("=" in part for m in match for part in m.split("&")):
+            raise ValueError(f"plantation {name}: match entries must look like key=value (join with &)")
+        dens = float(pr.get("density", 0.7))
+        if not 0 <= dens <= 1:
+            raise ValueError(f"plantation {name}: density must be 0-1")
+        color = [max(0, min(255, int(x))) for x in pr.get("color", [230, 120, 40])][:3]
+        plants.append({"name": name, "label": str(pr.get("label", name)), "color": color,
+                       "match": match, "asset": asset, "density": dens})
+    return {"sparse_below": sb, "single_tree": single, "plantation": plants, "biome": biomes}
+
+
+def _q(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
+    if not NAME_RE.match(region):
+        raise ValueError("region name: lowercase letters, digits, - and _")
+    d = validate_rules(data, evergreen)
+    lines = [
+        "# Forest types: biome (RESOLVE Ecoregions 2017) x elevation band (written by the app).",
+        "# Only evergreen assets: XP12 season rasters put the Andes in 'winter' for months.",
+        "# Ecoregions not listed in any biome use the \"default\" biome.",
+        "",
+        f"sparse_below = {_num(d['sparse_below'])}",
+        "",
+        "# Asset for OSM single trees and tree rows (must be evergreen).",
+        f"single_tree = {_q(d['single_tree'])}",
+        "",
+        "# Plantations from OpenStreetMap: first matching rule wins; match = key=value, & joins",
+        "# conditions; asset = \"\" means no trees.",
+    ]
+    for pr in d["plantation"]:
+        lines += ["", "[[plantation]]", f"name = {_q(pr['name'])}", f"label = {_q(pr['label'])}",
+                  f"color = [{', '.join(str(x) for x in pr['color'])}]",
+                  "match = [" + ", ".join(_q(m) for m in pr["match"]) + "]",
+                  f"asset = {_q(pr['asset'])}", f"density = {_num(pr['density'])}"]
+    for bm in d["biome"]:
+        lines += ["", "[[biome]]", f"name = {_q(bm['name'])}", f"label = {_q(bm['label'])}",
+                  f"color = [{', '.join(str(x) for x in bm['color'])}]",
+                  "ecoregions = [" + ", ".join(_q(e) for e in bm["ecoregions"]) + "]"]
+        for b in bm["band"]:
+            lines += ["[[biome.band]]", f"name = {_q(b['name'])}", f"elev_max = {_num(b['elev_max'])}",
+                      f"dense = {_q(b['dense'])}", f"sparse = {_q(b['sparse'])}"]
+    path = RULES / f"{region}.toml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path

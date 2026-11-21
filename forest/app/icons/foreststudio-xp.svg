@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<title>ForestStudio XP</title>
+<rect x="0" y="0" width="128" height="128" rx="28" fill="#1F3D2B"/>
+<g transform="translate(0 8)">
+<path d="M20 56L64 78V88L20 66Z" fill="#6E5236"/>
+<path d="M64 78L108 56V66L64 88Z" fill="#54402A"/>
+<path d="M64 34L108 56L64 78L20 56Z" fill="#2E5A3B" stroke="#4C8A5C" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M78.67 41.33L34.67 63.33M93.33 48.67L49.33 70.67M49.33 41.33L93.33 63.33M34.67 48.67L78.67 70.67" stroke="#447A55" stroke-width="1"/>
+<path d="M64 63.33L78.67 70.67L64 78L49.33 70.67Z" fill="none" stroke="#F2B33D" stroke-width="2.5" stroke-linejoin="round"/>
+<g transform="translate(60.04 41.11)"><ellipse rx="3.74" ry="1.87" fill="#16301F"/><g transform="translate(0 -9.35) scale(0.85)"><rect x="-1.5" y="7" width="3" height="4" fill="#C8935A"/><path d="M0 -11L7 -1H3.5L9 7H-9L-3.5 -1H-7Z" fill="#6FB85A"/><path d="M0 -11L7 -1H3.5L9 7H0Z" fill="#559A45"/></g></g>
+<g transform="translate(83.51 48.89)"><ellipse rx="4.4" ry="2.2" fill="#16301F"/><g transform="translate(0 -11)"><rect x="-1.5" y="7" width="3" height="4" fill="#C8935A"/><path d="M0 -11L7 -1H3.5L9 7H-9L-3.5 -1H-7Z" fill="#6FB85A"/><path d="M0 -11L7 -1H3.5L9 7H0Z" fill="#559A45"/></g></g>
+<g transform="translate(39.36 56)"><ellipse rx="4.84" ry="2.42" fill="#16301F"/><g transform="translate(0 -12.1) scale(1.1)"><rect x="-1.5" y="7" width="3" height="4" fill="#C8935A"/><path d="M0 -11L7 -1H3.5L9 7H-9L-3.5 -1H-7Z" fill="#6FB85A"/><path d="M0 -11L7 -1H3.5L9 7H0Z" fill="#559A45"/></g></g>
+<g transform="translate(64 70.67)"><ellipse rx="4.4" ry="2.2" fill="#16301F"/><g transform="translate(0 -11)"><rect x="-1.5" y="7" width="3" height="4" fill="#C8935A"/><path d="M0 -11L7 -1H3.5L9 7H-9L-3.5 -1H-7Z" fill="#A6D17A"/><path d="M0 -11L7 -1H3.5L9 7H0Z" fill="#86B95E"/></g></g>
+</g>
+</svg>

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ForestStudio XP</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <div class="brand"><img class="logo" src="icon.svg" alt=""> ForestStudio XP <small id="version">X-Plane 12 forests</small></div>
+  <nav class="views" id="views">
+    <button data-view="build" class="on">Build</button>
+    <button data-view="works">Build queue</button>
+    <button data-view="disk">Disk space</button>
+    <button data-view="appsettings">Settings</button>
+  </nav>
+  <label class="hdr">Profile <select id="profile"></select></label>
+  <label class="hdr">Region <select id="region"></select></label>
+</header>
+
+<main id="view-build" class="view on">
+  <section id="mapwrap">
+    <div id="map"></div>
+    <div class="maptools">
+      <div class="seg" id="basemap">
+        <button data-b="sat" class="on">Satellite</button><button data-b="osm">Map</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="showOverlay" checked> Forest overlay</label>
+      <input type="range" id="overlayOpacity" min="0" max="1" step="0.05" value="0.65" title="Overlay opacity">
+    </div>
+    <div class="flegend" id="forestLegend"></div>
+    <div class="legend">
+      <span><i class="sw sel"></i>selected</span>
+      <span><i class="sw inst"></i>installed</span>
+      <span><i class="sw built"></i>built</span>
+      <span><i class="sw cached"></i>data cached</span>
+      <span><i class="sw ortho"></i>has ortho</span>
+    </div>
+  </section>
+
+  <aside>
+    <nav class="tabs">
+      <button data-tab="tiles" class="on">Tiles</button>
+      <button data-tab="settings">Profile</button>
+      <button data-tab="types">Forest types</button>
+    </nav>
+
+    <div class="tab on" id="tab-tiles">
+      <h3>Selection</h3>
+      <p class="hint">Click tiles on the map to select them. Shift-click to add a row of tiles.</p>
+      <div class="row wrap">
+        <button id="selOrtho" class="ghost">Select ortho tiles</button>
+        <button id="selBuilt" class="ghost">Select built</button>
+        <button id="selClear" class="ghost">Clear</button>
+      </div>
+      <div id="selList" class="chips"></div>
+
+      <h3>X-Plane pack</h3>
+      <div id="packBox" class="info"></div>
+      <div class="row">
+        <button id="packInstall" class="primary">Install pack in X-Plane</button>
+        <button id="packUninstall" class="ghost">Uninstall pack</button>
+      </div>
+      <div id="packMsg" class="msg"></div>
+
+      <h3>Build</h3>
+      <div class="row">
+        <label class="hint" for="workers">Builds at the same time</label>
+        <select id="workers"></select>
+      </div>
+      <div id="workersInfo" class="hint"></div>
+      <div id="estimate" class="info est hidden"></div>
+      <div class="row">
+        <button id="build" class="primary">Build selected</button>
+        <button id="cancel" class="ghost" disabled>Cancel</button>
+      </div>
+      <div class="row"><button id="delete" class="ghost danger" disabled>Delete selected tiles…</button></div>
+      <div id="progress" class="progress hidden"><div></div></div>
+      <div id="progressText" class="hint"></div>
+      <a id="openQueue" class="link hidden" href="#">Open in Build queue (steps, log, report) →</a>
+
+      <h3>Tile info</h3>
+      <div id="tileInfo" class="info">Click a tile to see its status and last build.</div>
+    </div>
+
+    <div class="tab" id="tab-settings">
+      <div class="row between">
+        <h3 id="profTitle">Profile</h3>
+        <div class="row">
+          <button id="profRevert" class="ghost">Revert</button>
+          <button id="profSaveAs" class="ghost">Save as…</button>
+          <button id="profSave" class="primary">Save</button>
+        </div>
+      </div>
+      <div id="profMsg" class="msg"></div>
+      <p class="hint fpskey"><span class="fps fps-high">⚡⚡ FPS</span> biggest effect on frame rate ·
+        <span class="fps fps-medium">⚡ FPS</span> medium · <span class="fps fps-low">FPS</span> small ·
+        no mark = only file size and build time. The tile's <b>Max trees per tile</b> caps everything.</p>
+      <div id="profForm"></div>
+    </div>
+
+    <div class="tab" id="tab-types">
+      <div class="row between">
+        <h3 id="rulesTitle">Forest types</h3>
+        <div class="row">
+          <button id="rulesRevert" class="ghost">Revert</button>
+          <button id="rulesSave" class="primary">Save</button>
+        </div>
+      </div>
+      <p class="hint">Forest type = <b>biome</b> (where it is) × <b>elevation band</b> × <b>dense</b> or
+        <b>sparse</b> (tree density).
+        Only evergreen X-Plane forests are offered (no winter look in the Andes).</p>
+      <p class="hint fpskey">FPS cost of each type = trees per km² × triangles per tree:
+        <span class="fps fps-high">⚡⚡ heavy</span> ≥ 7 M triangles/km² ·
+        <span class="fps fps-medium">⚡ medium</span> 3–7 M · <span class="fps fps-low">light</span> &lt; 3 M.
+        Lists are sorted lightest first. When a tile hits its <b>Max trees</b>, the trees per km² no longer
+        matter (the cap thins them) but triangles per tree still do.</p>
+      <div id="rulesMsg" class="msg"></div>
+      <div class="field">
+        <div class="lbl"><span>Sparse below density</span><output id="sbOut"></output></div>
+        <input type="range" id="sparseBelow" min="0" max="1" step="0.05">
+      </div>
+      <div class="band" id="singleBox"></div>
+      <h3>Plantations</h3>
+      <p class="hint">Areas mapped in OpenStreetMap as orchards, plantations or crops. The first rule whose
+        tags match wins (use ↑ to reorder). Inside them the biome's forest is replaced, and trees are planted
+        even where the satellite map sees none.</p>
+      <div id="plantBox"></div>
+      <button id="addPlant" class="ghost">+ Add plantation</button>
+      <h3>Biomes</h3>
+      <p class="hint">Each biome is a group of ecoregions (RESOLVE Ecoregions 2017) with its own forest types
+        by elevation. Pick a biome to edit it.</p>
+      <div id="biomePicker" class="chips"></div>
+      <div class="band" id="biomeHead"></div>
+      <div id="bands"></div>
+      <button id="addBand" class="ghost">+ Add band</button>
+    </div>
+  </aside>
+</main>
+
+<!-- ============ Build queue: saved build jobs ============ -->
+<main id="view-works" class="view page">
+  <div class="page-inner works">
+    <div class="works-list">
+      <div class="row between"><h2>Build queue</h2>
+        <button id="jobsClear" class="ghost danger" title="Delete all finished jobs">🗑</button></div>
+      <h3>Jobs</h3>
+      <input id="jobSearch" placeholder="Search for a tile: +06-076, +10…" spellcheck="false">
+      <div id="jobList"></div>
+    </div>
+    <div class="works-detail" id="jobDetail">
+      <p class="hint">Build some tiles and every run shows up here with its steps, progress, log and report.</p>
+    </div>
+  </div>
+</main>
+
+<!-- ============ Disk space ============ -->
+<main id="view-disk" class="view page">
+  <div class="page-inner">
+    <div class="row between"><h2>Disk space</h2><button id="diskRefresh" class="ghost">Refresh</button></div>
+    <p class="hint">Everything ForestStudio stores lives in the project folder. X-Plane only has a link to the
+      built pack, so it takes no extra space there.</p>
+    <div id="diskBody"></div>
+  </div>
+</main>
+
+<!-- ============ App settings ============ -->
+<main id="view-appsettings" class="view page">
+  <div class="page-inner narrow">
+    <h2>Settings</h2>
+    <p class="hint">Where X-Plane 12 is on this computer. Saved in <code>config/local.toml</code>
+      (not shared in git). ForestStudio only reads from X-Plane, except its own
+      <code>Custom Scenery/forest_*</code> link.</p>
+    <div class="field">
+      <div class="lbl"><span>X-Plane 12 folder</span></div>
+      <div class="row"><input id="setXp" spellcheck="false" placeholder="e.g. C:\X-Plane 12">
+        <button id="setXpPick" class="ghost">Browse…</button><button id="setXpDetect" class="ghost">Detect</button></div>
+      <div id="setXpCheck" class="checks"></div>
+    </div>
+    <div class="row"><button id="setSave" class="primary">Save</button></div>
+    <div id="setMsg" class="msg"></div>
+    <h3>Setup checks</h3>
+    <div id="setupChecks" class="checks"></div>
+  </div>
+</main>
+
+<footer id="statusbar">
+  <span id="sbXp"></span><span id="sbChecks"></span><span id="sbDisk"></span><span id="sbJob"></span>
+</footer>
+
+<div id="delModal" class="modal hidden">
+  <div class="card wide">
+    <h3 id="delTitle">Delete tiles</h3>
+    <p class="hint" id="delTiles"></p>
+    <label class="chk"><input type="checkbox" id="delOutput" checked> <span id="delOutputTxt"></span></label>
+    <label class="chk"><input type="checkbox" id="delCache"> <span id="delCacheTxt"></span></label>
+    <p class="hint" id="delNote">Deleted tiles disappear from X-Plane too (the pack is a link to the project)
+      and show X-World / default forests again after restarting X-Plane. Downloaded data is fetched again
+      automatically if you rebuild. This can't be undone.</p>
+    <div id="delMsg" class="msg"></div>
+    <div class="row end"><button id="delCancel" class="ghost">Cancel</button><button id="delOk" class="primary danger">Delete</button></div>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="card">
+    <h3 id="modalTitle"></h3>
+    <input id="modalInput" spellcheck="false">
+    <div class="row end"><button id="modalCancel" class="ghost">Cancel</button><button id="modalOk" class="primary">OK</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+<script src="views.js"></script>
+</body>
+</html>
