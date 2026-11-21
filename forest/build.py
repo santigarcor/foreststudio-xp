@@ -246,6 +246,9 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                                          for i, pr in enumerate(plants) if (plant_idx == i).any()), t0)
     else:
         planted = np.zeros(grid.shape, dtype=bool)
+    # Airport grounds (OSM aerodrome boundary): WorldCover calls the pavement "built-up", so without
+    # this the grass between taxiways became town (SKRG: town trees 20-35 m from taxiways).
+    airport = coverage_mask(hints["airports"], grid, 0.25)
 
     # Scrub: bushes on WorldCover shrubland (and bare/sparse land in biomes that ask for it,
     # e.g. La Guajira), plus OSM natural=scrub/heath; never on forest, plantations or cut-outs.
@@ -259,7 +262,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         for _ in range(p.get("smooth_passes", 1)):
             scrub = median_filter(scrub.astype(np.uint8), size=3).astype(bool)
         has_scrub = np.array([bool(b.get("scrub")) for b in biomes])[biome_idx]
-        scrub &= has_scrub & ~raw & ~planted & ~excl & ~mangrove
+        scrub &= has_scrub & ~raw & ~planted & ~excl & ~mangrove & ~airport
         if scrub.any():
             sd = np.clip(scrub_share * float(p["scrub_density"]), 0.0, 1.0)
             for bi, bm in enumerate(biomes):
@@ -275,7 +278,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
 
     # Town: built-up land (WorldCover) or OSM residential, not industrial/commercial, not forest.
     town = (built_frac >= p.get("town_min_built", 0.3)) | coverage_mask(hints["residential"], grid, 0.5)
-    town &= ~coverage_mask(hints["no_town_trees"], grid, 0.5) & ~raw & ~planted & ~water
+    town &= ~coverage_mask(hints["no_town_trees"], grid, 0.5) & ~raw & ~planted & ~water & ~airport
     code = np.where(trees | scrub, asset_idx * 16 + level_idx + 1, 0).astype(np.int32)
 
     return {
@@ -408,6 +411,7 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     g = c["geoms"]
     blockers = [x for k in ("buildings", "roads", "runways", "corridors") for x in g.get(k, [])
                 if x is not None and x.is_valid and not x.is_empty]
+    blockers += [x for x in c["hints"].get("airports", []) if not x.is_empty]
     keep = np.ones(lon.size, dtype=bool)
     if blockers:
         hit = STRtree(blockers).query(shapely.points(lon, lat), predicate="intersects")[0]
@@ -657,7 +661,7 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 2  # 2: scrub and town trees
+BUILD_VERSION = 3  # 2: scrub and town trees; 3: none of them inside airport grounds
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json")
 
 

@@ -423,3 +423,15 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - Owner flew the FlightFactor 777 over built tiles with the **medium** profile
   (`tile_tree_budget` ≈ 27M): a steady 59+ fps. That is probably the 60 fps cap (vsync/limiter),
   so the real headroom is unknown; GPU/CPU frame times (X-Plane data output) would show it.
+
+### 2026-11-21 — No town trees or scrub on airport grounds
+
+- Owner's SKRG screenshot: lone trees right beside the parallel taxiway. Read-only check on the
+  cached +06-076 data: 46 town trees inside the SKRG boundary, all 20–35 m from a runway/taxiway
+  centre line (WorldCover marks airport pavement as built-up → the grass in between became
+  "town"; taxiways only clear ±20 m); 296 scrub cells too. The 39 OSM-mapped trees inside SKRG
+  are ≥ 54 m away (real trees near the fence) and stay.
+- Fix: OSM `aeroway=aerodrome` outlines (`hints["airports"]`) are excluded from town cells and
+  scrub and block town-tree points. After: 0 town trees and 0 scrub cells in SKRG. 92 forest
+  cells remain (satellite tree cover inside the fence; cleared only with `clear_airport_grounds`).
+  `BUILD_VERSION` 3.

@@ -171,7 +171,9 @@ tests/                              pytest suite (sandboxed)
      density level; vectorised and budgeted with the forests. Grassland (30) is **not** used: in
      Colombia it is mostly cattle pasture.
    - **town** cells: WorldCover built-up (50) share ≥ `town_min_built` or OSM `landuse=residential`,
-     minus OSM industrial/commercial/retail, forest, plantations and water.
+     minus OSM industrial/commercial/retail, forest, plantations, water and **airport grounds**
+     (OSM aerodrome boundary; WorldCover calls apron/runway pavement built-up). Scrub also skips
+     airport grounds; real forest there is kept unless `clear_airport_grounds = 1`.
 3. **Vectorize** per (asset, density level) inside `chunks_per_degree` windows, simplify
    (`simplify_m`), drop < `min_area_m2`; **split polygons with > 250 holes** (DSF limit: 255
    windings per polygon — "too many intervals in polygon").

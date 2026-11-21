@@ -130,9 +130,12 @@ def osm_tree_hints(osm_json: Path) -> dict[str, list]:
 
     data = json.loads(osm_json.read_text(encoding="utf-8"))
     out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": [],
-                            "residential": [], "no_town_trees": [], "scrub": []}
+                            "residential": [], "no_town_trees": [], "scrub": [], "airports": []}
 
     def areas(tags: dict, polys: list) -> None:
+        if tags.get("aeroway") == "aerodrome":   # airport grounds: never town trees or scrub
+            out["airports"] += [p for p in polys if p.is_valid]
+            return
         lu = tags.get("landuse")
         key = ("residential" if lu in TOWN_LANDUSE else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE
                else "scrub" if is_scrub_area(tags) else None)

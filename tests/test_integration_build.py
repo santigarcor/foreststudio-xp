@@ -63,6 +63,7 @@ def _make_tile_data(sandbox):
         {"type": "way", "id": 6, "tags": {"building": "yes"}, "geometry": sq(-75.2, 6.8, 0.02)},
         {"type": "way", "id": 7, "tags": {"landuse": "industrial"}, "geometry": sq(-75.1, 6.8, 0.04)},
         {"type": "way", "id": 8, "tags": {"natural": "scrub"}, "geometry": sq(-75.6, 6.92, 0.04)},
+        {"type": "way", "id": 9, "tags": {"aeroway": "aerodrome", "icao": "SKXX"}, "geometry": sq(-75.24, 6.76, 0.04)},
     ]
     write_json(c / "osm.json", {"version": 3, "elements": els})
 
@@ -181,6 +182,7 @@ def test_town_trees_avoid_buildings_and_industry(built_tile):
     """Town trees are points (fill 512); none inside the big building or the industrial area."""
     from shapely.geometry import Point, box
     building, industrial = box(-75.2, 6.8, -75.18, 6.82), box(-75.1, 6.8, -75.06, 6.84)
+    airport = box(-75.24, 6.76, -75.20, 6.80)
     pts, cur = [], None
     for ln in built_tile.read_text().splitlines():
         if ln.startswith("BEGIN_POLYGON"):
@@ -192,6 +194,7 @@ def test_town_trees_avoid_buildings_and_industry(built_tile):
     assert len(town) > 1000
     assert not any(building.contains(q) for q in town)
     assert not any(industrial.contains(q) for q in town)
+    assert not any(airport.contains(q) for q in town)          # no town trees on airport grounds
 
 
 def test_old_rules_get_scrub_and_town_defaults(real_rules):
