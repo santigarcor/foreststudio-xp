@@ -81,3 +81,21 @@ def test_plantation_match_syntax(real_rules):
 def test_fake_catalog_helper_marks_seasons():
     e = fake_catalog_entries(["a.for", "b.for"], seasonal={"b.for"})
     assert e[0]["seasons"] == [] and e[1]["seasons"]
+
+
+def test_reset_to_defaults_reads_the_shipped_files(sandbox, copy_repo_file):
+    """'Reset to defaults' loads the shipped profile / forest types, never the user's copies."""
+    from forest import config
+    from forest.app.api import Api
+    copy_repo_file("config/profiles/medium.toml", config.DEFAULTS_DIR / "profiles" / "medium.toml")
+    copy_repo_file("config/rules/colombia.toml", config.DEFAULTS_DIR / "rules" / "colombia.toml")
+    (sandbox.root / "config" / "profiles").mkdir(parents=True, exist_ok=True)
+    (sandbox.root / "config" / "profiles" / "medium.toml").write_text("tile_tree_budget = 5\n")
+    a = Api.__new__(Api)
+    d = a.default_profile("medium")
+    assert d["base"] == "medium" and d["values"]["tile_tree_budget"] > 1_000_000
+    assert "town_trees_per_km2" in d["values"]
+    assert a.default_profile("medium-copy")["base"] == "medium"        # own profiles reset to medium
+    r = a.default_rules("colombia")
+    assert r["ok"] and any(b["name"] == "xeric" and b["scrub"] for b in r["rules"]["biome"])
+    assert not a.default_rules("nowhere")["ok"]

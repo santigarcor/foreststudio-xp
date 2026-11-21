@@ -280,6 +280,14 @@ class Api:
         from forest.build import PROFILE_DEFAULTS
         return {**PROFILE_DEFAULTS, **st.read_toml(config.profile_path(name))}
 
+    def default_profile(self, name: str) -> dict:
+        """The values shipped with ForestStudio for this profile (for "Reset to defaults").
+        A profile of the user's own (e.g. "medium-copy") resets to the shipped medium one."""
+        from forest.build import PROFILE_DEFAULTS
+        base = name if (config.DEFAULTS_DIR / "profiles" / f"{name}.toml").exists() else "medium"
+        values = st.read_toml(config.DEFAULTS_DIR / "profiles" / f"{base}.toml")
+        return {"base": base, "values": {**PROFILE_DEFAULTS, **values}}
+
     def save_profile(self, name: str, data: dict) -> dict:
         try:
             st.write_profile(name, data)
@@ -290,6 +298,14 @@ class Api:
     def get_rules(self, region: str) -> dict:
         from forest.build import fill_rule_defaults
         return fill_rule_defaults(st.read_toml(config.rules_path(region)), region)
+
+    def default_rules(self, region: str) -> dict:
+        """The forest types shipped with ForestStudio for this region (for "Reset to defaults")."""
+        from forest.build import fill_rule_defaults
+        path = config.DEFAULTS_DIR / "rules" / f"{region}.toml"
+        if not path.exists():
+            return {"ok": False, "error": f"No shipped forest types for '{region}'."}
+        return {"ok": True, "rules": fill_rule_defaults(st.read_toml(path), region)}
 
     def save_rules(self, region: str, data: dict) -> dict:
         try:

@@ -87,7 +87,7 @@ whatever forests you had before.
 
 | View | What it's for |
 |---|---|
-| **Build** | Map with tile status (selected, installed, built, outdated, data downloaded), the forest overlay preview, and the side tabs: **Tiles** (select, build, install, delete, tile info), **Profile** (performance settings) and **Forest types** (which X-Plane forest grows in each biome and elevation band, plus plantations). |
+| **Build** | Map with tile status (selected, installed, built, outdated, data downloaded), the forest overlay preview, and the side tabs: **Tiles** (select, build, install, delete, tile info), **Profile** (performance settings, with Reset to defaults) and **Forest types** (which X-Plane forest grows in each biome and elevation band, plus plantations). |
 | **Build queue** | Every build or download job, with per-tile steps, progress, log and a final report. |
 | **Data** | What has been downloaded: the OpenStreetMap country file (check for and get newer map data), the biome map, and each tile's data. You can also download data for selected tiles without building them. |
 | **Disk space** | How much space everything takes, and safe clean-ups. |

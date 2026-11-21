@@ -666,6 +666,17 @@ async function init() {
   $("#profSave").onclick = () => saveProfile($("#profile").value);
   $("#profSaveAs").onclick = async () => { const n = await ask("Save profile as", $("#profile").value + "-copy"); if (n) saveProfile(n); };
   $("#rulesRevert").onclick = loadRules;
+  $("#profDefaults").onclick = async () => {
+    const d = await api().default_profile($("#profile").value);
+    profile = d.values; renderProfile();
+    msg("#profMsg", `Loaded the default values of the '${d.base}' profile. Press Save to keep them, or Revert to undo.`);
+  };
+  $("#rulesDefaults").onclick = async () => {
+    const d = await api().default_rules($("#region").value);
+    if (!d.ok) return msg("#rulesMsg", d.error, true);
+    rules = d.rules; curBiome = 0; renderRules(); renderForestLegend();
+    msg("#rulesMsg", "Loaded the default forest types. Press Save to keep them, or Revert to undo.");
+  };
   $("#rulesSave").onclick = async () => {
     const r = await api().save_rules($("#region").value, rules);
     if (r.ok) { msg("#rulesMsg", "Saved."); loadRules(); refreshStatus(); } else msg("#rulesMsg", r.error, true);

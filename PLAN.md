@@ -417,3 +417,9 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   was right. +11-075 had ~500 km² the same way (Tayrona dry forest).
 - Fix: xeric dense = `broadleaves/hot_dry.for`, sparse = `g8/broad_sp_hot_sdry.for` (defaults and
   the owner's rules, backup in cache/backups); `shrb_vhot_dry` stays as xeric's scrub type.
+
+### 2026-11-21 — First FPS report
+
+- Owner flew the FlightFactor 777 over built tiles with the **medium** profile
+  (`tile_tree_budget` ≈ 27M): a steady 59+ fps. That is probably the 60 fps cap (vsync/limiter),
+  so the real headroom is unknown; GPU/CPU frame times (X-Plane data output) would show it.

@@ -237,11 +237,13 @@ old records without them load as builds. Only one job (build or download) runs a
     "Builds at the same time: Auto (N)/1…max", time & disk **estimate** (from `history.jsonl`
     medians), confirmation for ≥10 tiles or >30 min, Delete selected tiles (built tiles and/or
     downloaded data), Tile info (status, last build stats, forest by biome, plantations, types).
-  - **Profile**: every profile value as slider + help + FPS mark; Save / Save as / Revert.
+  - **Profile**: every profile value as slider + help + FPS mark; Reset to defaults (shipped values via
+    `Api.default_profile`; own profiles reset to medium; not saved until Save) / Revert / Save as / Save.
   - **Forest types**: sparse_below, OSM single-tree type, general town-tree type, per-biome
     **Scrub & town trees** (bush type or none, "also on bare ground", town tree type), **Plantations** editor (tags, tree type,
     thickness, reorder), **Biomes** (colour, label, ecoregion chips add/remove, per-biome
-    elevation bands with dense/sparse type pickers sorted lightest first with FPS cost).
+    elevation bands with dense/sparse type pickers sorted lightest first with FPS cost); **Reset to defaults** loads the shipped
+    rules (`Api.default_rules`), saved only with Save).
   - (No log tab: the Tiles tab shows progress + "Open in Build queue"; the live log is in the Build queue.)
 - **Build queue** (internal id `works`; the open log keeps updating without closing): saved jobs (search by tile), progress, per-tile step bars, log, final report,
   per-step table, errors; delete job / clear all. Download jobs show as "Download data" /
