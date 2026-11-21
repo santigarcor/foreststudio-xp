@@ -139,8 +139,13 @@ function renderForestLegend() {
   }
   const cutSw = el("span", { class: "ramp" }); cutSw.style.background = `rgb(${cut.join(",")})`;
   box.append(el("div", { class: "r" }, cutSw, el("b", {}, "cut out"), "roads, buildings, water, airports"));
+  const scSw = el("span", { class: "ramp" });
+  scSw.style.background = `linear-gradient(90deg, ${rgb(S.overlay.scrub, shade[0])}, ${rgb(S.overlay.scrub, shade[1])})`;
+  box.append(el("div", { class: "r" }, scSw, el("b", {}, "scrub"), "bushes on open bushland"));
   const osmSw = el("span", { class: "ramp" }); osmSw.style.background = `rgb(${S.overlay.osm.join(",")})`;
   box.append(el("div", { class: "r" }, osmSw, el("b", {}, "OSM trees"), "single trees and tree rows from OpenStreetMap"));
+  const twSw = el("span", { class: "ramp" }); twSw.style.background = `rgb(${S.overlay.town.join(",")})`;
+  box.append(el("div", { class: "r" }, twSw, el("b", {}, "town trees"), "scattered trees in towns"));
   box.append(el("div", { class: "note" },
     "Colour = biome. Dark → bright = thin → thick forest. Transparent = no trees. "
     + "Shows the forest types as they were at the tile's last build."));
@@ -283,6 +288,10 @@ async function showTileInfo(name) {
     const t2 = el("table");
     const rows = [["Profile", st.profile], ["Forest area (km²)", fmt(st.forest_km2)], ["Polygons", fmt(st.polygons)],
       ["Estimated trees", fmt(st.estimated_trees)], ["Budget scale", st.budget_scale], ["Build time (s)", st.seconds]];
+    if (st.scrub_km2 !== undefined) rows.splice(2, 0, ["Scrub area (km²)", fmt(st.scrub_km2)]);
+    if (st.town_trees !== undefined) rows.splice(st.scrub_km2 !== undefined ? 5 : 4, 0,
+      ["Town trees", `${fmt(st.town_trees)} in ${fmt(st.town_km2)} km² of town`],
+      ["OSM single trees / rows", `${fmt(st.osm_single_trees)} / ${fmt(st.osm_tree_row_trees)}`]);
     for (const [k, v] of rows) t2.append(el("tr", {}, el("td", {}, k), el("td", {}, String(v))));
     info.append(el("h3", {}, "Last build"), t2);
     if (st.biome_km2) {
@@ -385,7 +394,7 @@ const COST_MARK = { high: "⚡⚡", medium: "⚡", low: "·" };
 const COST_WORD = { high: "heavy", medium: "medium", low: "light" };
 function assetSelect(value, onchange, list = S.evergreen, allowNone = false) {
   const s = el("select");
-  if (allowNone) s.append(el("option", { value: "" }, "—  No trees (crop without trees)"));
+  if (allowNone) s.append(el("option", { value: "" }, typeof allowNone === "string" ? allowNone : "—  No trees (crop without trees)"));
   // Lightest first, so cheaper choices are at the top of the list.
   const order = [...list].sort((a, b) => (S.asset_info[a]?.mtris_km2 ?? 0) - (S.asset_info[b]?.mtris_km2 ?? 0));
   for (const a of order) {
@@ -491,8 +500,33 @@ function renderRules() {
       + "and for tree rows. X-Plane picks a random tree from this type for each point."),
     stLab, assetSelect(rules.single_tree, v => { rules.single_tree = v; stNote.textContent = assetNote(v);
       stLab.replaceChildren("OSM single trees & tree rows", costBadge(v)); }), stNote);
+  if (!rules.town_tree) rules.town_tree = rules.single_tree;
+  const ttNote = el("div", { class: "sp" }, assetNote(rules.town_tree));
+  const ttLab = el("div", { class: "lab" }, "Town trees (where the biome sets none)", costBadge(rules.town_tree));
+  sb.append(el("div", { class: "hint" }, "Trees scattered through towns and cities (how many: profile → "
+      + "'Town trees per km²'). Each biome can pick its own type below, e.g. dry types with palms on the coast."),
+    ttLab, assetSelect(rules.town_tree, v => { rules.town_tree = v; ttNote.textContent = assetNote(v);
+      ttLab.replaceChildren("Town trees (where the biome sets none)", costBadge(v)); }), ttNote);
   renderPlantations();
   const box = $("#bands"); box.innerHTML = "";
+  {
+    const scNote = el("div", { class: "sp" }, bm.scrub ? assetNote(bm.scrub) : "No scrub in this biome.");
+    const scLab = el("div", { class: "lab" }, "Scrub (bushes on open bushland)", bm.scrub ? costBadge(bm.scrub) : "");
+    const scSel = assetSelect(bm.scrub || "", v => { bm.scrub = v; scNote.textContent = v ? assetNote(v) : "No scrub in this biome.";
+      scLab.replaceChildren("Scrub (bushes on open bushland)", v ? costBadge(v) : ""); }, S.evergreen_all, "—  No scrub");
+    const bare = el("input", { type: "checkbox" }); bare.checked = !!bm.scrub_on_bare;
+    bare.onchange = () => { bm.scrub_on_bare = bare.checked; };
+    const twNote = el("div", { class: "sp" }, bm.town_tree ? assetNote(bm.town_tree) : "Uses the general town tree type above.");
+    const twLab = el("div", { class: "lab" }, "Town trees", bm.town_tree ? costBadge(bm.town_tree) : "");
+    const twSel = assetSelect(bm.town_tree || "", v => { bm.town_tree = v;
+      twNote.textContent = v ? assetNote(v) : "Uses the general town tree type above.";
+      twLab.replaceChildren("Town trees", v ? costBadge(v) : ""); }, S.evergreen_all, "—  Same as the general town tree type");
+    box.append(el("h3", {}, `Scrub & town trees — ${bm.name}`), el("div", { class: "band" },
+      scLab, scSel, scNote,
+      el("label", { class: "chk", title: "For deserts and dry coasts: the satellite map calls much of La Guajira bare or sparse ground." },
+        bare, " Also put sparse bushes on bare / sparsely vegetated ground"),
+      twLab, twSel, twNote));
+  }
   box.append(el("h3", {}, `Elevation bands — ${bm.name}`));
   bm.band.forEach((b, i) => {
     const prevMax = i ? bm.band[i - 1].elev_max : 0;

@@ -9,6 +9,15 @@ sparse_below = 0.45
 # Asset for OSM single trees and tree rows (must be evergreen).
 single_tree = "lib/vegetation/forests/mixed/very_hot.for"
 
+# Scattered town trees (built-up / residential land) where a biome sets no `town_tree`.
+# very_hot.for mixes palms, kapok and broadleaves.
+town_tree = "lib/vegetation/forests/mixed/very_hot.for"
+
+# Per biome (optional):
+#   scrub = bushes on WorldCover shrubland / OSM natural=scrub ("" = no scrub in that biome)
+#   scrub_on_bare = true also puts sparse bushes on bare / sparsely vegetated land (La Guajira)
+#   town_tree = tree type for town trees in that biome
+
 # Plantations from OpenStreetMap (landuse=orchard/plantation/vineyard, farmland with crop/trees,
 # forest with leaf_type). The first rule whose `match` fits wins. Each match entry is
 # "key=value", or several joined with "&" (all must fit); values are case-insensitive.
@@ -101,6 +110,7 @@ ecoregions = [
   "Catatumbo moist forests", "Isthmian-Atlantic moist forests", "Western Ecuador moist forests",
   "Cayos Miskitos-San Andrés and Providencia moist forests", "South American Pacific mangroves",
 ]
+scrub = "lib/g8/shrb_vhot_rain.for"
 [[biome.band]]
 name = "lowland"
 elev_max = 1200
@@ -128,6 +138,7 @@ ecoregions = [
   "Cordillera La Costa montane forests", "Eastern Panamanian montane forests",
   "Pantepui forests & shrublands",
 ]
+scrub = "lib/g8/shrb_vhot_wet.for"
 [[biome.band]]
 name = "premontane"
 elev_max = 1900
@@ -153,6 +164,8 @@ ecoregions = [
   "Sinú Valley dry forests", "Apure-Villavicencio dry forests", "Maracaibo dry forests",
   "Lara-Falcón dry forests", "Amazon-Orinoco-Southern Caribbean mangroves",
 ]
+scrub = "lib/g8/shrb_hot_sdry.for"
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
 [[biome.band]]
 name = "valley"
 elev_max = 1500
@@ -172,6 +185,9 @@ ecoregions = [
   "Guajira-Barranquilla xeric scrub", "La Costa xeric shrublands", "Paraguaná xeric scrub",
   "Caribbean shrublands", "Malpelo Island xeric scrub",
 ]
+scrub = "lib/g8/shrb_vhot_dry.for"
+scrub_on_bare = true
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
 [[biome.band]]
 name = "all"
 elev_max = 9000
@@ -183,6 +199,7 @@ name = "savanna"
 label = "Llanos savanna with gallery forest (moriche palms)"
 color = [150, 205, 70]
 ecoregions = ["Llanos"]
+scrub = "lib/g8/shrb_vhot_sdry.for"
 [[biome.band]]
 name = "all"
 elev_max = 9000
@@ -196,6 +213,7 @@ color = [40, 160, 170]
 # Filled from WorldCover's mangrove class, not ecoregions: the RESOLVE mangrove polygons are
 # coarse and reach far inland (they now count as dry forest / rainforest, see those biomes).
 ecoregions = []
+scrub = "lib/g8/wetl_shrb_vhot_wet.for"
 [[biome.band]]
 name = "all"
 elev_max = 9000
@@ -207,6 +225,7 @@ name = "paramo"
 label = "Páramo (high Andes)"
 color = [185, 180, 140]
 ecoregions = ["Northern Andean páramo", "Cordillera de Merida páramo", "Santa Marta páramo"]
+scrub = ""  # páramo: frailejones and grass, no lowland bushes
 [[biome.band]]
 name = "upper forest"
 elev_max = 3200
@@ -223,6 +242,7 @@ name = "default"
 label = "Everything else (ecoregions not listed above)"
 color = [110, 140, 110]
 ecoregions = []
+scrub = "lib/g8/shrb_vhot_wet.for"
 [[biome.band]]
 name = "lowland"
 elev_max = 1000

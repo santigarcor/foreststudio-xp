@@ -18,4 +18,8 @@ density_blur_cells = 2.0  # Soften thickness changes: Blends thick and thin fore
 grid_cells = 6000  # Map detail: How finely the tile is analysed. 6000 = squares of ~18 m. Higher = forest edges follow roads and fields more closely, but bigger files and slower builds.
 simplify_m = 12  # Edge smoothing (m): Straightens forest edges by up to this distance, removing the blocky 'staircase' look. About 2/3 of the map detail square works well (12 m at 6000).
 chunks_per_degree = 16  # Split forests into pieces: Big forests are cut into square pieces so X-Plane can skip the ones you can't see. 16 = pieces of ~7 km. Rarely needs changing.
+scrub_min_frac = 0.5  # How much scrub a spot needs: share of bushland (satellite) a spot needs to get bushes
+scrub_density = 0.5  # Scrub thickness: 0 = no scrub at all
+town_trees_per_km2 = 150  # Town trees per km²: scattered trees in towns; 0 = none
+town_min_built = 0.3  # What counts as town: share of built-up land a spot needs
 density_levels = [0.35, 0.65, 1.0]

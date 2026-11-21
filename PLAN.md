@@ -389,3 +389,21 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   app never downloaded the .pbf / ecoregions itself (they had been fetched by hand): fetch now
   downloads them when missing. First update check: Geofabrik's file was ~6 h newer than ours.
 - Dropped from the plan by the owner: "select all Colombia" (manual selection) and tree height.
+
+### 2026-11-21 — Scrub and town trees
+
+- No new downloads: WorldCover classes 20 (shrubland), 50 (built-up) and 60 (bare/sparse) were
+  already in every tile's raster. OSM extraction now also keeps `landuse=residential`,
+  `industrial/commercial/retail` and `natural=scrub/heath` (`osm_pbf.VERSION` 4 → every tile is
+  re-extracted once from the local .pbf, ~140 s for the pass). `BUILD_VERSION` 2.
+- Scrub: shrubland share ≥ `scrub_min_frac` (+ bare land in xeric via `scrub_on_bare`, OSM scrub
+  = 0.7), per-biome bush type (páramo none). Grassland deliberately not used (cattle pasture).
+- Town trees: random points in built-up/residential cells, dropped on buildings/roads/runways/
+  corridors, trimmed to `town_trees_per_km2` (oversampled 3×: 36 % of spots hit buildings/roads in
+  Medellín, 54 % in Barranquilla). Per-biome type: dry_forest/xeric use broadleaves/hot_dry
+  (palms, kapok, agave), elsewhere mixed/very_hot.
+- Measured on real tiles (medium, temp data folder): +06-076 Medellín 32.4k town trees in 216 km²
+  of town, 21 km² scrub, 27.0M trees total (budget scale 0.837, unchanged), 72 s; +11-075
+  Barranquilla/Santa Marta 26 km² scrub, 63 km² town, 6.7M trees, 30 s. Both compiled.
+- Older user rules/profiles get the new keys from the shipped defaults (`fill_rule_defaults`,
+  `PROFILE_DEFAULTS`), so nothing has to be re-saved.

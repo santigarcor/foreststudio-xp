@@ -2,6 +2,10 @@ grid_cells = 4000
 min_tree_frac = 0.55
 recent_loss_from = 21
 global_density = 0.6
+scrub_min_frac = 0.6  # How much scrub a spot needs: share of bushland (satellite) a spot needs to get bushes
+scrub_density = 0.3  # Scrub thickness: 0 = no scrub at all
+town_trees_per_km2 = 80  # Town trees per km²: scattered trees in towns; 0 = none
+town_min_built = 0.4  # What counts as town: share of built-up land a spot needs
 density_levels = [0.5, 1.0]
 smooth_passes = 3
 density_blur_cells = 3.0

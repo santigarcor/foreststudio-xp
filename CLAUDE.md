@@ -164,12 +164,24 @@ tests/                              pytest suite (sandboxed)
    - **plantations** (OSM orchards/plantations/farmland/needleleaved forests) replace the biome
      asset inside their outline and are planted regardless of satellite tree share; rules with
      `asset = ""` clear trees (sugar cane, pineapple, rice…). First matching rule wins.
+   - **scrub**: cells with WorldCover shrubland (20) share ≥ `scrub_min_frac` (+ bare/sparse
+     class 60 in biomes with `scrub_on_bare`, i.e. xeric/La Guajira; OSM `natural=scrub|heath`
+     counts as 0.7), majority-filtered, never on forest/plantations/cut-outs/mangroves, only in
+     biomes with a `scrub` asset (páramo has none); thickness = share × `scrub_density` → nearest
+     density level; vectorised and budgeted with the forests. Grassland (30) is **not** used: in
+     Colombia it is mostly cattle pasture.
+   - **town** cells: WorldCover built-up (50) share ≥ `town_min_built` or OSM `landuse=residential`,
+     minus OSM industrial/commercial/retail, forest, plantations and water.
 3. **Vectorize** per (asset, density level) inside `chunks_per_degree` windows, simplify
    (`simplify_m`), drop < `min_area_m2`; **split polygons with > 250 holes** (DSF limit: 255
    windings per polygon — "too many intervals in polygon").
 4. **OSM trees**: `natural=tree` → point forests (fill 512, grouped per chunk); `natural=tree_row`
    → line forests (fill 256); skipped inside buildings, runway strips and existing forest; never
-   thinned by the budget.
+   thinned by the budget. **Town trees** (`build.town_trees`): Poisson-random points in town cells
+   (`town_trees_per_km2`, seeded by tile name so rebuilds are identical), dropped if they hit a
+   building (with clearance), road, runway/taxiway or rail/power corridor (one bulk STRtree query);
+   point forests per (biome `town_tree` or rules `town_tree`, chunk), ≤ 1000 points per polygon;
+   `ForestPolygon.kind = "town"` keeps them apart in the stats; never thinned by the budget.
 5. **Budget**: estimated trees = area × density × global_density × trees/km²; scaled down to
    `tile_tree_budget`. DSF density = 0–255.
 6. **Write** DSF text (tile-wide `sim/exclude_for` so our forests replace everything below),
@@ -219,13 +231,15 @@ old records without them load as builds. Only one job (build or download) runs a
 - **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid; tile status colours (ortho,
   cached, built, installed, selected; **outdated** = dashed); click/shift-click selection
   (no "select all": the owner selects by hand); **Select outdated**; forest overlay (colour = biome
-  or plantation, brightness = density, red = cut out, yellow = OSM trees) with legend; sidebar tabs:
+  or plantation, lilac = scrub, brightness = density, red = cut out, yellow = OSM trees, light blue =
+  town trees) with legend; sidebar tabs:
   - **Tiles**: selection, **X-Plane pack** (Install/Uninstall pack, ini warnings), Build with
     "Builds at the same time: Auto (N)/1…max", time & disk **estimate** (from `history.jsonl`
     medians), confirmation for ≥10 tiles or >30 min, Delete selected tiles (built tiles and/or
     downloaded data), Tile info (status, last build stats, forest by biome, plantations, types).
   - **Profile**: every profile value as slider + help + FPS mark; Save / Save as / Revert.
-  - **Forest types**: sparse_below, OSM single-tree type, **Plantations** editor (tags, tree type,
+  - **Forest types**: sparse_below, OSM single-tree type, general town-tree type, per-biome
+    **Scrub & town trees** (bush type or none, "also on bare ground", town tree type), **Plantations** editor (tags, tree type,
     thickness, reorder), **Biomes** (colour, label, ecoregion chips add/remove, per-biome
     elevation bands with dense/sparse type pickers sorted lightest first with FPS cost).
   - (No log tab: the Tiles tab shows progress + "Open in Build queue"; the live log is in the Build queue.)
@@ -292,7 +306,11 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 
 ## Rules file (`config/rules/colombia.toml`)
 
-- `sparse_below`, `single_tree` (asset for OSM single trees/rows).
+- `sparse_below`, `single_tree` (asset for OSM single trees/rows), `town_tree` (town trees where
+  a biome sets none; very_hot.for = palms + kapok + broadleaves).
+- Per biome (optional): `scrub` (bush asset, "" = none), `scrub_on_bare` (bool), `town_tree`.
+  Keys missing in a user's older rules file are filled from the shipped default biome of the same
+  name (`build.fill_rule_defaults`, also used by `Api.get_rules`); an explicit "" is kept.
 - `[[plantation]]` name, label, color, `match = ["key=value", "a=b&c=d"]` (case-insensitive,
   first match wins), `asset` ("" = no trees), `density`. Current: oil_palm (date palm),
   coconut, banana, coffee (shrubs + shade), rubber, conifer (pine), eucalyptus, no_trees, orchard.
@@ -308,7 +326,9 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 grid_cells, min_tree_frac, recent_loss_from, smooth_passes, min_area_m2, road_clearance_scale,
 building_clearance_m, cutout_min_cover, runway_clearance_m, clear_airport_grounds,
 osm_green_min_frac, osm_single_trees, osm_tree_rows, tile_tree_budget (main FPS knob),
-global_density, density_blur_cells, simplify_m, chunks_per_degree, density_levels.
+global_density, density_blur_cells, simplify_m, chunks_per_degree, density_levels,
+scrub_density (0 = off), scrub_min_frac, town_trees_per_km2 (0 = off), town_min_built.
+Keys added later have defaults in `build.PROFILE_DEFAULTS` (older profile files still build/load).
 Schema, ranges, help texts and FPS marks: `forest/app/settings.py` (`PROFILE_SCHEMA`, `FPS_IMPACT`).
 The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
@@ -337,7 +357,7 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
   require; written on every compile and on Install pack); app files go to `<data>/out/studio_<region>/`.
-- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION`
+- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 4)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
 - Large inline edits: prefer the Edit tool; Python patch scripts via heredoc break on Windows

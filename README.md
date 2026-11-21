@@ -21,6 +21,9 @@ It currently covers **Colombia**. More regions may come later.
 - **Clear of roads, buildings, water and runways**, cut out using OpenStreetMap.
 - **Plantations and city trees**: oil palm, coconut, banana, coffee, rubber, pine and eucalyptus
   plantations, plus parks, golf courses, single trees and tree rows mapped in OpenStreetMap.
+- **Town trees and scrub**: trees scattered through towns and cities (never on buildings or roads,
+  not in industrial zones; palms and dry-climate trees on the Caribbean side), and bushes on open
+  bushland such as La Guajira, the Caribbean coast and the Llanos. Both have their own sliders.
 - **FPS-aware settings**: a tree budget per tile and three performance profiles (low / medium /
   high). Every setting is explained in plain language and marked with how much it affects frame rate.
 - **Works next to your other scenery**: ortho tiles (e.g. OrthoStudio), simHeaven X-World and airport

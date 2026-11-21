@@ -110,8 +110,9 @@ def fake_catalog_entries(assets, seasonal=()) -> list[dict]:
 
 
 def rules_assets(rules: dict) -> set[str]:
-    out = {rules.get("single_tree")} if rules.get("single_tree") else set()
+    out = {rules[k] for k in ("single_tree", "town_tree") if rules.get(k)}
     for bm in rules.get("biome", []):
+        out |= {bm[k] for k in ("scrub", "town_tree") if bm.get(k)}
         for b in bm["band"]:
             out |= {b["dense"], b["sparse"]}
     for pr in rules.get("plantation", []):

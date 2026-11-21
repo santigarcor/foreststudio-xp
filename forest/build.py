@@ -35,7 +35,7 @@ from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, O
 from forest.exclusions import coverage_mask, exclusion_mask, osm_geometries, osm_tree_hints
 from forest.fetch.elevation import elevation_on_grid
 from forest.fetch.osm import fetch_osm
-from forest.fetch.rasters import WC_MANGROVE, WC_TREE, fetch_all, read_on_grid
+from forest.fetch.rasters import WC_BARE, WC_BUILT, WC_MANGROVE, WC_SHRUB, WC_TREE, fetch_all, read_on_grid
 from forest.tiles import Grid, Tile
 
 
@@ -51,9 +51,40 @@ class Settings:
     @classmethod
     def load(cls, profile: str, region: str) -> "Settings":
         return cls(
-            profile=_toml(config.profile_path(profile)),
-            rules=_toml(config.rules_path(region)),
+            profile={**PROFILE_DEFAULTS, **_toml(config.profile_path(profile))},
+            rules=fill_rule_defaults(_toml(config.rules_path(region)), region),
         )
+
+
+# Profile keys added after the first release: older profile files build as if they had these.
+PROFILE_DEFAULTS = {
+    "scrub_min_frac": 0.5,
+    "scrub_density": 0.5,
+    "town_trees_per_km2": 150,
+    "town_min_built": 0.3,
+}
+
+
+def fill_rule_defaults(rules: dict, region: str) -> dict:
+    """Fill keys added after the first release (scrub, town trees) from the shipped default
+    rules: a biome without them takes the values of the default biome with the same name.
+    An explicit "" (no scrub) is kept."""
+    path = config.DEFAULTS_DIR / "rules" / f"{region}.toml"
+    shipped = _toml(path) if path.exists() else {}
+    by_name = {b["name"]: b for b in shipped.get("biome", [])}
+    out = dict(rules)
+    out.setdefault("town_tree", shipped.get("town_tree") or rules.get("single_tree", ""))
+    biomes = []
+    for b in rules.get("biome", []):
+        b = dict(b)
+        ref = by_name.get(b.get("name"), {})
+        b.setdefault("scrub", ref.get("scrub", ""))
+        b.setdefault("scrub_on_bare", bool(ref.get("scrub_on_bare", False)))
+        b.setdefault("town_tree", ref.get("town_tree", ""))
+        biomes.append(b)
+    if biomes:
+        out["biome"] = biomes
+    return out
 
 
 def _log(msg: str, t0: float) -> None:
@@ -115,7 +146,14 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     paths = fetch_all(tile)
     _log("rasters cached", t0)
 
-    frac, mangrove_frac = tree_fraction(paths["worldcover"], grid, with_mangrove=True)
+    with rasterio.open(paths["worldcover"]) as src:
+        wc = src.read(1)
+        frac = _class_share(wc, src, grid, (WC_TREE, WC_MANGROVE))
+        mangrove_frac = _class_share(wc, src, grid, (WC_MANGROVE,))
+        shrub_frac = _class_share(wc, src, grid, (WC_SHRUB,))
+        bare_frac = _class_share(wc, src, grid, (WC_BARE,))
+        built_frac = _class_share(wc, src, grid, (WC_BUILT,))
+        del wc
     # Cells WorldCover calls mangrove get the mangrove biome and are not cut by water.
     mangrove = mangrove_frac >= p.get("mangrove_min_frac", 0.3)
     tc = read_on_grid(paths["treecover2000"], grid, Resampling.bilinear) / 100.0
@@ -206,14 +244,46 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         trees = ((raw & ~planted) | (planted & has_asset)) & ~excl
         _log("plantations: " + ", ".join(f"{pr['name']} {int((plant_idx == i).sum()):,} cells"
                                          for i, pr in enumerate(plants) if (plant_idx == i).any()), t0)
-    code = np.where(trees, asset_idx * 16 + level_idx + 1, 0).astype(np.int32)
+    else:
+        planted = np.zeros(grid.shape, dtype=bool)
+
+    # Scrub: bushes on WorldCover shrubland (and bare/sparse land in biomes that ask for it,
+    # e.g. La Guajira), plus OSM natural=scrub/heath; never on forest, plantations or cut-outs.
+    scrub = np.zeros(grid.shape, dtype=bool)
+    if float(p.get("scrub_density", 0)) > 0:
+        on_bare = np.array([bool(b.get("scrub_on_bare")) for b in biomes])[biome_idx]
+        scrub_share = shrub_frac + np.where(on_bare, bare_frac, 0.0)
+        osm_scrub = coverage_mask(hints["scrub"], grid, 0.5)
+        scrub_share = np.where(osm_scrub, np.maximum(scrub_share, 0.7), scrub_share)
+        scrub = scrub_share >= p["scrub_min_frac"]
+        for _ in range(p.get("smooth_passes", 1)):
+            scrub = median_filter(scrub.astype(np.uint8), size=3).astype(bool)
+        has_scrub = np.array([bool(b.get("scrub")) for b in biomes])[biome_idx]
+        scrub &= has_scrub & ~raw & ~planted & ~excl & ~mangrove
+        if scrub.any():
+            sd = np.clip(scrub_share * float(p["scrub_density"]), 0.0, 1.0)
+            for bi, bm in enumerate(biomes):
+                sel = scrub & (biome_idx == bi)
+                if not sel.any():
+                    continue
+                if bm["scrub"] not in assets:
+                    assets.append(bm["scrub"])
+                asset_idx[sel] = assets.index(bm["scrub"])
+            nearest = np.argmin(np.abs(sd[..., None] - np.asarray(levels, dtype=np.float32)), axis=-1)
+            level_idx = np.where(scrub, nearest, level_idx)
+            _log(f"scrub: {int(scrub.sum()):,} cells", t0)
+
+    # Town: built-up land (WorldCover) or OSM residential, not industrial/commercial, not forest.
+    town = (built_frac >= p.get("town_min_built", 0.3)) | coverage_mask(hints["residential"], grid, 0.5)
+    town &= ~coverage_mask(hints["no_town_trees"], grid, 0.5) & ~raw & ~planted & ~water
+    code = np.where(trees | scrub, asset_idx * 16 + level_idx + 1, 0).astype(np.int32)
 
     return {
         "grid": grid, "code": code, "assets": assets, "levels": levels,
         "excl_stats": excl_stats, "trees": trees, "excl": excl, "biome_idx": biome_idx, "raw": raw,
         "biomes": biomes, "level_idx": level_idx, "green": green, "hints": hints, "geoms": geoms,
-        "plant_idx": plant_idx, "plants": plants,
-        "tree_cells": int(trees.sum()),
+        "plant_idx": plant_idx, "plants": plants, "scrub": scrub, "town": town,
+        "tree_cells": int(trees.sum()), "scrub_cells": int(scrub.sum()),
     }
 
 
@@ -300,6 +370,71 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
                     polys.append(ForestPolygon(asset=asset, exterior=pts, density=1.0, fill=FILL_LINE))
                     n_rows += 1
         _log(f"OSM tree rows: {n_rows}", t0)
+    return polys
+
+
+# Points per point-forest polygon (several polygons per chunk if a town has more trees).
+MAX_POINTS_PER_POLYGON = 1000
+TOWN_OVERSAMPLE = 3.0
+
+
+def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
+    """Scattered trees in towns (X-Plane point forests): random spots in town cells, kept off
+    buildings, roads, runways and rail/power corridors. The same tile always gets the same trees."""
+    import shapely
+    from shapely import STRtree
+
+    p = s.profile
+    per_km2 = float(p.get("town_trees_per_km2", 0))
+    town = c.get("town")
+    if per_km2 <= 0 or town is None or not town.any():
+        return []
+    grid: Grid = c["grid"]
+    w0, s0, e0, n0 = grid.tile.bounds
+    cell_km2 = (111.32 * math.cos(math.radians(grid.tile.lat + 0.5))) * 110.574 / grid.cells ** 2
+    seed = int(hashlib.sha256(grid.tile.name.encode()).hexdigest()[:8], 16)
+    rng = np.random.default_rng(seed)
+    rows, cols = np.nonzero(town)
+    target = int(round(per_km2 * cell_km2 * rows.size))
+    # Draw extra spots (many fall on buildings/roads: 36 % in Medellín, 54 % in Barranquilla), then trim to the target,
+    # so "trees per km²" is the number of trees actually planted.
+    n = rng.poisson(TOWN_OVERSAMPLE * per_km2 * cell_km2, size=rows.size)
+    rows, cols = np.repeat(rows, n), np.repeat(cols, n)
+    if not rows.size:
+        return []
+    d = 1.0 / grid.cells
+    lon = w0 + (cols + rng.random(cols.size)) * d
+    lat = n0 - (rows + rng.random(rows.size)) * d
+    g = c["geoms"]
+    blockers = [x for k in ("buildings", "roads", "runways", "corridors") for x in g.get(k, [])
+                if x is not None and x.is_valid and not x.is_empty]
+    keep = np.ones(lon.size, dtype=bool)
+    if blockers:
+        hit = STRtree(blockers).query(shapely.points(lon, lat), predicate="intersects")[0]
+        keep[np.unique(hit)] = False
+    dropped = int((~keep).sum())
+    free = np.flatnonzero(keep)
+    if free.size > target:
+        free = np.sort(rng.choice(free, size=target, replace=False))
+    lon, lat, rows, cols = lon[free], lat[free], rows[free], cols[free]
+
+    default = s.rules.get("town_tree") or s.rules.get("single_tree")
+    asset_of = [b.get("town_tree") or default for b in c["biomes"]]
+    step = 1.0 / p["chunks_per_degree"]
+    groups: dict[tuple, list] = {}
+    biome = c["biome_idx"][rows, cols]
+    for x, y, bi in zip(lon.tolist(), lat.tolist(), biome.tolist()):
+        groups.setdefault((asset_of[bi], int((x - w0) / step), int((y - s0) / step)), []).append((x, y))
+    polys: list[ForestPolygon] = []
+    for (asset, _, _), pts in groups.items():
+        for i in range(0, len(pts), MAX_POINTS_PER_POLYGON):
+            part = pts[i:i + MAX_POINTS_PER_POLYGON]
+            while len(part) < 3:
+                part.append(part[-1])
+            polys.append(ForestPolygon(asset=asset, exterior=part, density=1.0, fill=FILL_POINTS,
+                                       kind="town"))
+    _log(f"town trees: {lon.size:,} in {int(town.sum()):,} town cells "
+         f"({dropped:,} of {keep.size:,} candidate spots fell on buildings/roads)", t0)
     return polys
 
 
@@ -402,11 +537,14 @@ def budget(polys: list[ForestPolygon], tile: Tile, s: Settings) -> dict:
     est = sum(area_km2(p) * p.density * g * cat[p.asset]["max_trees_per_km2"] for p in solid)
     scale = min(1.0, s.profile["tile_tree_budget"] / est) if est else 1.0
     per_asset: dict[str, dict] = {}
-    osm_points = osm_row_trees = 0
+    osm_points = osm_row_trees = town = 0
     for p in polys:
-        if p.fill == FILL_POINTS:  # one tree per mapped OSM tree, never thinned
+        if p.fill == FILL_POINTS:  # one tree per point (OSM or town), never thinned
             p.density = 255
-            osm_points += len(set(p.exterior))
+            if p.kind == "town":
+                town += len(set(p.exterior))
+            else:
+                osm_points += len(set(p.exterior))
             continue
         if p.fill == FILL_LINE:
             p.density = 255
@@ -422,10 +560,11 @@ def budget(polys: list[ForestPolygon], tile: Tile, s: Settings) -> dict:
     return {
         "estimated_trees_before_budget": round(est),
         "budget_scale": round(scale, 3),
-        "estimated_trees": round(forest_trees + osm_points + osm_row_trees),
+        "estimated_trees": round(forest_trees + osm_points + osm_row_trees + town),
         "forest_km2": round(sum(a["km2"] for a in per_asset.values()), 1),
         "osm_single_trees": osm_points,
         "osm_tree_row_trees": round(osm_row_trees),
+        "town_trees": town,
         "per_asset": {k: {kk: round(vv, 1) for kk, vv in v.items()} for k, v in per_asset.items()},
     }
 
@@ -442,6 +581,10 @@ def preview(c: dict, out: Path, size: int = 1500) -> None:
     img = np.full((3, *trees.shape), 235, dtype=np.uint8)
     for i in range(3):
         img[i][trees] = palette[biome][trees][:, i]
+    if c.get("scrub") is not None:
+        scrub = zoom(c["scrub"].astype(np.uint8), f, order=0).astype(bool)
+        for i in range(3):
+            img[i][scrub] = OVERLAY_SCRUB[i]
     img[0][excl], img[1][excl], img[2][excl] = 220, 60, 60
     with rasterio.open(out, "w", driver="PNG", width=trees.shape[1], height=trees.shape[0],
                        count=3, dtype="uint8") as dst:
@@ -454,6 +597,8 @@ OVERLAY_PALETTE = [[0, 120, 60], [40, 170, 70], [120, 200, 60], [190, 190, 120]]
 OVERLAY_SHADE = (0.55, 1.0)
 OVERLAY_CUT = [235, 50, 50]
 OVERLAY_OSM = [255, 215, 40]  # OSM single trees and tree rows
+OVERLAY_SCRUB = [205, 150, 225]  # scrub / bushes (brightness = thickness); unlike any biome colour
+OVERLAY_TOWN = [90, 210, 255]  # scattered town trees
 
 
 def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon] | None = None) -> None:
@@ -473,6 +618,12 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
     for i in range(3):
         img[i][trees] = rgb[..., i][trees].astype(np.uint8)
     img[3][trees] = 210
+    if c.get("scrub") is not None and c["scrub"].any():
+        sc = z(c["scrub"]).astype(bool)
+        tone = np.array(OVERLAY_SCRUB, dtype=np.float32) * shade[..., None]
+        for i in range(3):
+            img[i][sc] = tone[..., i][sc].astype(np.uint8)
+        img[3][sc] = 190
     if c.get("plants") and (c["plant_idx"] >= 0).any():
         pidx = zoom(c["plant_idx"].astype(np.int16) + 1, f, order=0).astype(np.int16) - 1
         for j, pr in enumerate(c["plants"]):
@@ -490,11 +641,15 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
         w0, s0, e0, n0 = c["grid"].tile.bounds
         tr = from_origin(w0, n0, 1.0 / size, 1.0 / size)
-        shapes_ = [(MultiPoint(p.exterior) if p.fill == FILL_POINTS else LineString(p.exterior), 1)
-                   for p in osm_polys]
-        m = rasterize(shapes_, out_shape=trees.shape, transform=tr, all_touched=True, dtype="uint8").astype(bool)
-        img[0][m], img[1][m], img[2][m] = OVERLAY_OSM
-        img[3][m] = 255
+        for kind, colour in (("town", OVERLAY_TOWN), ("", OVERLAY_OSM)):  # OSM trees drawn on top
+            shapes_ = [(MultiPoint(p.exterior) if p.fill == FILL_POINTS else LineString(p.exterior), 1)
+                       for p in osm_polys if p.kind == kind]
+            if not shapes_:
+                continue
+            m = rasterize(shapes_, out_shape=trees.shape, transform=tr, all_touched=True,
+                          dtype="uint8").astype(bool)
+            img[0][m], img[1][m], img[2][m] = colour
+            img[3][m] = 255
     with rasterio.open(out, "w", driver="PNG", width=trees.shape[1], height=trees.shape[0],
                        count=4, dtype="uint8") as dst:
         dst.write(img)
@@ -502,7 +657,7 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 1
+BUILD_VERSION = 2  # 2: scrub and town trees
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json")
 
 
@@ -555,7 +710,7 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
     c = classify(tile, s, t0)
     _log(f"classified: {c['tree_cells']:,} tree cells", t0)
     polys = vectorize(c, s, t0)
-    extra = osm_trees(c, s, t0)
+    extra = osm_trees(c, s, t0) + town_trees(c, s, t0)
     polys += extra
     stats = budget(polys, tile, s)
     _log(f"budget: {stats['estimated_trees']:,} trees (scale {stats['budget_scale']})", t0)
@@ -569,6 +724,8 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
     cell_km2 = (111.32 * math.cos(math.radians(tile.lat + 0.5))) * 110.574 / c["grid"].cells ** 2
     stats["biome_km2"] = {b["name"]: round(float((c["trees"] & (c["biome_idx"] == i)).sum()) * cell_km2, 1)
                           for i, b in enumerate(c["biomes"]) if (c["trees"] & (c["biome_idx"] == i)).any()}
+    stats["scrub_km2"] = round(float(c["scrub"].sum()) * cell_km2, 1)
+    stats["town_km2"] = round(float(c["town"].sum()) * cell_km2, 1)
     stats["plantation_km2"] = {pr["name"]: round(float((c["plant_idx"] == i).sum()) * cell_km2, 1)
                                for i, pr in enumerate(c.get("plants", [])) if (c["plant_idx"] == i).any()}
     stats.update(tile=tile.name, profile=profile, region=region, polygons=len(polys),

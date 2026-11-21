@@ -15,7 +15,8 @@ from pathlib import Path
 from forest import config
 from forest.app import settings as st
 from forest.assets.catalog import load_catalog
-from forest.build import OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SHADE
+from forest.build import (OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SCRUB, OVERLAY_SHADE,
+                          OVERLAY_TOWN)
 from forest.config import REPO_ROOT  # the code folder (subprocess cwd); data is config.DATA_ROOT
 from forest.tiles import CACHE, Tile
 
@@ -191,7 +192,8 @@ class Api:
             "density_levels_help": st.DENSITY_LEVELS_HELP,
             "fps_impact": st.FPS_IMPACT,
             "ecoregions": self._ecoregions(),
-            "overlay": {"palette": OVERLAY_PALETTE, "shade": OVERLAY_SHADE, "cut": OVERLAY_CUT, "osm": OVERLAY_OSM},
+            "overlay": {"palette": OVERLAY_PALETTE, "shade": OVERLAY_SHADE, "cut": OVERLAY_CUT, "osm": OVERLAY_OSM,
+                        "scrub": OVERLAY_SCRUB, "town": OVERLAY_TOWN},
             "evergreen": self.evergreen,
             "evergreen_all": self.evergreen_all,
             "asset_info": self.asset_info,
@@ -278,7 +280,8 @@ class Api:
 
     # ---------- settings ----------
     def get_profile(self, name: str) -> dict:
-        return st.read_toml(config.profile_path(name))
+        from forest.build import PROFILE_DEFAULTS
+        return {**PROFILE_DEFAULTS, **st.read_toml(config.profile_path(name))}
 
     def save_profile(self, name: str, data: dict) -> dict:
         try:
@@ -288,7 +291,8 @@ class Api:
             return {"ok": False, "error": str(exc)}
 
     def get_rules(self, region: str) -> dict:
-        return st.read_toml(config.rules_path(region))
+        from forest.build import fill_rule_defaults
+        return fill_rule_defaults(st.read_toml(config.rules_path(region)), region)
 
     def save_rules(self, region: str, data: dict) -> dict:
         try:

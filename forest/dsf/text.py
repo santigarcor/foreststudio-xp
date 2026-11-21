@@ -38,6 +38,7 @@ class ForestPolygon:
     holes: list[Ring] = field(default_factory=list)
     density: int = 255  # 0-255
     fill: int = FILL_SOLID
+    kind: str = ""  # build bookkeeping only ("town" = scattered town trees); not written
 
 
 SEASON_RASTERS = ("spr1", "spr2", "sum1", "sum2", "fal1", "fal2", "win1", "win2")

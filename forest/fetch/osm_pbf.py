@@ -29,12 +29,25 @@ from forest.tiles import Tile
 
 PBF_DIR = config.CACHE_ROOT / "osm"
 DEFAULT_PBF = PBF_DIR / "colombia-latest.osm.pbf"
-VERSION = 3  # bump when the set of extracted features changes (old caches are re-extracted)
+VERSION = 4  # bump when the set of extracted features changes (old caches are re-extracted)
 
 _WATERWAY = re.compile(r"^(river|riverbank|canal)$")
 _AEROWAY = re.compile(r"^(aerodrome|runway|taxiway|apron|helipad)$")
 GREEN_LEISURE = ("park", "golf_course", "garden", "nature_reserve")
 PLANTATION_LANDUSE = ("orchard", "plantation", "vineyard")
+# Town trees go in residential land, never in industrial/commercial zones.
+TOWN_LANDUSE = ("residential",)
+NO_TOWN_TREE_LANDUSE = ("industrial", "commercial", "retail")
+SCRUB_NATURAL = ("scrub", "heath")
+
+
+def is_town_area(t) -> bool:
+    lu = t.get("landuse")
+    return lu in TOWN_LANDUSE or lu in NO_TOWN_TREE_LANDUSE
+
+
+def is_scrub_area(t) -> bool:
+    return t.get("natural") in SCRUB_NATURAL
 
 
 def is_green_area(t) -> bool:
@@ -55,13 +68,13 @@ def wanted_way(t) -> bool:
         or bool(_WATERWAY.match(t.get("waterway", "")))
         or bool(_AEROWAY.match(t.get("aeroway", "")))
         or t.get("railway") == "rail" or t.get("power") == "line"
-        or is_green_area(t) or is_plantation(t)
+        or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
     )
 
 
 def wanted_area_relation(t) -> bool:
     return ("building" in t or t.get("natural") == "water" or t.get("aeroway") == "aerodrome"
-            or is_green_area(t) or is_plantation(t))
+            or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t))
 
 
 class _TileWriter:

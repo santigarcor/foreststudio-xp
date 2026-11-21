@@ -64,6 +64,23 @@ PROFILE_SCHEMA: dict[str, tuple] = {
     "osm_tree_rows": (int, 0, 1, 1, "OpenStreetMap trees", "Place OSM tree rows (0/1)",
                       "1 = plant trees along every tree row mapped in OpenStreetMap "
                       "(avenues, windbreaks, field edges)."),
+    "scrub_density": (float, 0.0, 1.0, 0.05, "Scrub & town trees", "Scrub thickness",
+                      "Bushes on open bushland the satellite map shows (dry Caribbean coast, La Guajira, "
+                      "Llanos) and on OSM scrub areas. 0 = no scrub at all; 0.5 = medium; 1 = as thick "
+                      "as the bush type allows. Each forest type (biome) picks its own bush type."),
+    "scrub_min_frac": (float, 0.2, 0.9, 0.05, "Scrub & town trees", "How much bushland a spot needs",
+                       "A ~18 m spot gets bushes only if at least this share of it is bushland on the "
+                       "satellite map. Lower = more scrub, also on patchy ground; higher = only "
+                       "solid bushland."),
+    "town_trees_per_km2": (int, 0, 600, 10, "Scrub & town trees", "Town trees per km²",
+                           "Trees scattered through towns and cities, in yards, plazas and along "
+                           "streets, never on buildings or roads. 150 ≈ one tree per 80 × 80 m. "
+                           "0 = none (only trees mapped in OpenStreetMap)."),
+    "town_min_built": (float, 0.1, 0.9, 0.05, "Scrub & town trees", "What counts as town",
+                       "A spot counts as town when at least this share of it is built-up on the "
+                       "satellite map (OSM residential areas always count; industrial and "
+                       "commercial areas never get town trees). Lower = also scattered houses "
+                       "and villages."),
     "tile_tree_budget": (int, 1_000_000, 100_000_000, 1_000_000, "Density & performance", "Max trees per tile",
                          "The main frame-rate setting. If a tile would have more trees than this, "
                          "all its forests are thinned evenly until it fits. 30 M is a medium value."),
@@ -101,6 +118,10 @@ FPS_IMPACT = {
     "osm_green_min_frac": "low",
     "osm_single_trees": "low",
     "osm_tree_rows": "low",
+    "scrub_density": "medium",
+    "scrub_min_frac": "medium",
+    "town_trees_per_km2": "medium",
+    "town_min_built": "low",
     "runway_clearance_m": "none",
     "clear_airport_grounds": "none",
     "grid_cells": "none",
@@ -136,6 +157,9 @@ def _num(v) -> str:
 
 
 def validate_profile(data: dict) -> dict:
+    from forest.build import PROFILE_DEFAULTS
+
+    data = {**PROFILE_DEFAULTS, **data}
     out: dict = {}
     for key, (typ, lo, hi, _step, *_rest) in PROFILE_SCHEMA.items():
         if key not in data:
@@ -197,13 +221,23 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
         seen.add(name)
         color = [max(0, min(255, int(x))) for x in bm.get("color", [60, 160, 70])][:3]
         ecos = [str(e) for e in bm.get("ecoregions", [])]
+        scrub = str(bm.get("scrub") or "")
+        if scrub and scrub not in evergreen:
+            raise ValueError(f"{name} / scrub: {scrub} is not an evergreen forest asset")
+        town = str(bm.get("town_tree") or "")
+        if town and town not in evergreen:
+            raise ValueError(f"{name} / town trees: {town} is not an evergreen forest asset")
         biomes.append({"name": name, "label": str(bm.get("label", name)), "color": color,
-                       "ecoregions": ecos, "band": _validate_bands(bm["band"], evergreen, name)})
+                       "ecoregions": ecos, "scrub": scrub, "scrub_on_bare": bool(bm.get("scrub_on_bare")),
+                       "town_tree": town, "band": _validate_bands(bm["band"], evergreen, name)})
     if "default" not in seen:
         raise ValueError('a biome named "default" is required (used for unlisted ecoregions)')
     single = data.get("single_tree") or biomes[0]["band"][0]["dense"]
     if single not in evergreen:
         raise ValueError(f"single_tree: {single} is not an evergreen forest asset")
+    town_tree = data.get("town_tree") or single
+    if town_tree not in evergreen:
+        raise ValueError(f"town_tree: {town_tree} is not an evergreen forest asset")
     plants, pseen = [], set()
     for pr in data.get("plantation", []):
         name = str(pr["name"]).strip()
@@ -222,7 +256,8 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
         color = [max(0, min(255, int(x))) for x in pr.get("color", [230, 120, 40])][:3]
         plants.append({"name": name, "label": str(pr.get("label", name)), "color": color,
                        "match": match, "asset": asset, "density": dens})
-    return {"sparse_below": sb, "single_tree": single, "plantation": plants, "biome": biomes}
+    return {"sparse_below": sb, "single_tree": single, "town_tree": town_tree,
+            "plantation": plants, "biome": biomes}
 
 
 def _q(s: str) -> str:
@@ -243,6 +278,12 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
         "# Asset for OSM single trees and tree rows (must be evergreen).",
         f"single_tree = {_q(d['single_tree'])}",
         "",
+        "# Town trees where a biome sets no town_tree (must be evergreen).",
+        f"town_tree = {_q(d['town_tree'])}",
+        "",
+        "# Per biome: scrub = bush type (\"\" = none), scrub_on_bare = also on bare land,",
+        "# town_tree = town tree type (\"\" = the one above).",
+        "",
         "# Plantations from OpenStreetMap: first matching rule wins; match = key=value, & joins",
         "# conditions; asset = \"\" means no trees.",
     ]
@@ -254,7 +295,9 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
     for bm in d["biome"]:
         lines += ["", "[[biome]]", f"name = {_q(bm['name'])}", f"label = {_q(bm['label'])}",
                   f"color = [{', '.join(str(x) for x in bm['color'])}]",
-                  "ecoregions = [" + ", ".join(_q(e) for e in bm["ecoregions"]) + "]"]
+                  "ecoregions = [" + ", ".join(_q(e) for e in bm["ecoregions"]) + "]",
+                  f"scrub = {_q(bm['scrub'])}", f"scrub_on_bare = {_num(bm['scrub_on_bare'])}",
+                  f"town_tree = {_q(bm['town_tree'])}"]
         for b in bm["band"]:
             lines += ["[[biome.band]]", f"name = {_q(b['name'])}", f"elev_max = {_num(b['elev_max'])}",
                       f"dense = {_q(b['dense'])}", f"sparse = {_q(b['sparse'])}"]

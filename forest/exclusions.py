@@ -124,13 +124,21 @@ def osm_geometries(osm_json: Path, lat_mid: float, profile: dict | None = None) 
 
 def osm_tree_hints(osm_json: Path) -> dict[str, list]:
     """Real trees mapped in OSM: green areas (parks, gardens, golf, woods, forests),
-    single trees (points) and tree rows (lines)."""
-    from forest.fetch.osm_pbf import is_green_area
-
-    from forest.fetch.osm_pbf import is_plantation
+    single trees (points), tree rows (lines), plantations; plus the areas that steer town trees
+    (residential vs industrial/commercial land) and scrub (natural=scrub/heath)."""
+    from forest.fetch.osm_pbf import NO_TOWN_TREE_LANDUSE, TOWN_LANDUSE, is_green_area, is_plantation, is_scrub_area
 
     data = json.loads(osm_json.read_text(encoding="utf-8"))
-    out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": []}
+    out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": [],
+                            "residential": [], "no_town_trees": [], "scrub": []}
+
+    def areas(tags: dict, polys: list) -> None:
+        lu = tags.get("landuse")
+        key = ("residential" if lu in TOWN_LANDUSE else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE
+               else "scrub" if is_scrub_area(tags) else None)
+        if key:
+            out[key] += [p for p in polys if p.is_valid]
+
     for el in data.get("elements", []):
         tags = el.get("tags", {})
         if el["type"] == "node":
@@ -142,6 +150,7 @@ def osm_tree_hints(osm_json: Path) -> dict[str, list]:
                 out["plantations"] += [(p, tags) for p in _relation_polys(el) if p.is_valid]
             if is_green_area(tags):
                 out["green"] += _relation_polys(el)
+            areas(tags, _relation_polys(el))
             continue
         if (is_plantation(tags) or (tags.get("landuse") == "forest" and (tags.get("leaf_type") or tags.get("genus")))):
             pts = _coords(el)
@@ -154,10 +163,13 @@ def osm_tree_hints(osm_json: Path) -> dict[str, list]:
             continue
         if tags.get("natural") == "tree_row":
             out["rows"].append(LineString(pts))
-        elif is_green_area(tags) and len(pts) >= 4 and pts[0] == pts[-1]:
-            poly = Polygon(pts)
-            if poly.is_valid:
-                out["green"].append(poly)
+        elif len(pts) >= 4 and pts[0] == pts[-1]:
+            if is_green_area(tags):
+                poly = Polygon(pts)
+                if poly.is_valid:
+                    out["green"].append(poly)
+            else:
+                areas(tags, [Polygon(pts)])
     return out
 
 
