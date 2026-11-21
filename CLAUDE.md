@@ -318,6 +318,10 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
   sparse. Biomes: rainforest, montane, dry_forest, xeric, savanna (Llanos), mangrove (**no
   ecoregions — WorldCover class 95 only**; RESOLVE mangrove polygons reach far inland and were
   moved to dry_forest/rainforest), paramo, **default** (required, catch-all, last).
+  **xeric** forest uses real dry-forest trees (`broadleaves/hot_dry` / `g8/broad_sp_hot_sdry`), not
+  shrubs: the RESOLVE "Guajira-Barranquilla xeric scrub" ecoregion also covers the Sucre/Bolívar/
+  Magdalena dry forests, and shrub types there put bushes on real tree canopy (+09-076: 1,054 km²).
+  Bushes come only from xeric's `scrub` (shrubland/bare land).
 - Saved by the app via `forest/app/settings.py` (validated: evergreen assets, increasing bands,
   unique names, default biome present, match syntax).
 

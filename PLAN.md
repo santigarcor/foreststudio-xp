@@ -407,3 +407,13 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   Barranquilla/Santa Marta 26 km² scrub, 63 km² town, 6.7M trees, 30 s. Both compiled.
 - Older user rules/profiles get the new keys from the shipped defaults (`fill_rule_defaults`,
   `PROFILE_DEFAULTS`), so nothing has to be re-saved.
+
+### 2026-11-21 — Xeric biome gets dry-forest trees
+
+- Owner's screenshots of +09-076 (Sucre coast): photo shows tree canopy, sim showed tiny bushes.
+  Stats: 1,264 km² of forest in the xeric biome, 1,054 km² of it as `g8/shrb_vhot_dry` (agave,
+  yucca, dead bush, stones) because xeric used shrub types for dense/sparse *forest*. The RESOLVE
+  xeric-scrub ecoregion is coarse and covers the coastal dry forests; WorldCover (≥ 50 % trees)
+  was right. +11-075 had ~500 km² the same way (Tayrona dry forest).
+- Fix: xeric dense = `broadleaves/hot_dry.for`, sparse = `g8/broad_sp_hot_sdry.for` (defaults and
+  the owner's rules, backup in cache/backups); `shrb_vhot_dry` stays as xeric's scrub type.

@@ -191,8 +191,10 @@ town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
 [[biome.band]]
 name = "all"
 elev_max = 9000
-dense = "lib/g8/shrb_vhot_dry.for"
-sparse = "lib/g8/sparse_vhot_dry.for"
+# Real dry-forest trees where the satellite map sees forest (the ecoregion is coarse and also
+# covers the Sucre/Bolívar/Magdalena dry forests); bushes only via `scrub` above.
+dense = "lib/vegetation/forests/broadleaves/hot_dry.for"
+sparse = "lib/g8/broad_sp_hot_sdry.for"
 
 [[biome]]
 name = "savanna"
