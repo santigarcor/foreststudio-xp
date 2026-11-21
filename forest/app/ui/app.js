@@ -56,11 +56,10 @@ function tileStyle(name) {
   const sel = selected.has(name);
   let color = "#ffffff", weight = 0.6, opacity = 0.18, dash = null;
   if (s.land) { opacity = 0.35; }
-  if (s.ortho) { color = "#e08a3f"; opacity = 0.9; dash = "4 4"; weight = 1.2; }
   if (s.cached) { color = "#8a7fd6"; opacity = 0.95; dash = null; weight = 1.4; }
   if (s.built) { color = "#3fa0e0"; opacity = 1; weight = 1.8; dash = null; }
   if (s.installed) { color = "#4cc38a"; opacity = 1; weight = 2.2; dash = null; }
-  if (s.built && s.outdated && s.outdated.length) { dash = "7 5"; }   // built, but settings/data changed
+  if (s.built && s.outdated && s.outdated.length) { color = "#f08c3a"; weight = 2.2; }   // settings/data changed
   return {
     color, weight, opacity, dashArray: dash,
     fillColor: sel ? "#f5c542" : "#000",
@@ -274,7 +273,7 @@ function updateEstimate() {
 
 async function showTileInfo(name) {
   const s = status[name] || {};
-  const flags = [["Land tile (base mesh)", s.land], ["Ortho (OrthoStudio)", s.ortho], ["Data cached", s.cached],
+  const flags = [["Land tile (base mesh)", s.land], ["Data cached", s.cached],
     ["Built", s.built],
     ["Up to date", !s.built ? false : (s.outdated && s.outdated.length ? "no — " + s.outdated.join("; ") : "yes")],
     ["In X-Plane", s.installed ? "yes (pack linked)" : (s.built ? "no — pack not installed" : false)]];
@@ -685,7 +684,6 @@ async function init() {
     renderRules();
   };
   $("#selClear").onclick = () => { selected.clear(); renderSelection(); drawTiles(); };
-  $("#selOrtho").onclick = () => { for (const [n, s] of Object.entries(status)) if (s.ortho) selected.add(n); renderSelection(); drawTiles(); };
   $("#selBuilt").onclick = () => { for (const [n, s] of Object.entries(status)) if (s.built) selected.add(n); renderSelection(); drawTiles(); };
   $("#selOutdated").onclick = () => {
     const out = Object.entries(status).filter(([, s]) => s.outdated && s.outdated.length);

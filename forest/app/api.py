@@ -213,7 +213,7 @@ class Api:
             return []
 
     def tile_status(self, region: str = "colombia", pack: str = "", profile: str = "") -> dict:
-        """Per tile: land / ortho / data cached / built / installed (= built and the region's
+        """Per tile: land / data cached / built / installed (= built and the region's
         pack is linked into X-Plane), the last build's stats and, for built tiles, why they're
         outdated compared with `profile` + the current forest types + the downloaded data."""
         from forest.build import Settings, outdated_reasons, settings_fingerprint
@@ -226,9 +226,7 @@ class Api:
             fp = None
 
         xp = self.cfg.xplane_root
-        cs = xp / "Custom Scenery"
         gs = xp / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"
-        ortho = {q.name.removeprefix("zOrthoStudio_") for q in cs.glob("zOrthoStudio_*")}
         linked = pack_status(region)["installed"]
         out: dict[str, dict] = {}
         for lat in range(GRID_LAT[0], GRID_LAT[1]):
@@ -242,7 +240,6 @@ class Api:
                     "cached": (c / "worldcover.tif").exists() and (c / "osm.json").exists(),
                     "built": built,
                     "installed": built and linked,
-                    "ortho": t.name in ortho,
                 }
                 j = None
                 if stats.exists():

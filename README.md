@@ -64,7 +64,7 @@ included or downloaded automatically.
 1. **Settings**: ForestStudio looks for X-Plane 12 by itself. If it doesn't find it, choose your
    X-Plane 12 folder and press **Save**. The setup checks should then show ✓.
 2. **Build** view: click tiles on the map to select them (shift-click selects a block of tiles).
-   Tiles with ortho scenery are outlined in orange.
+   Built tiles outlined in orange are outdated (see below).
 3. Press **Build selected**. The first build also downloads the OpenStreetMap country file and the
    biome map. Each tile takes about 1–2 minutes once its data is downloaded. Follow progress in the
    **Build queue**.
@@ -87,14 +87,14 @@ whatever forests you had before.
 
 | View | What it's for |
 |---|---|
-| **Build** | Map with tile status (selected, installed, built, outdated, data downloaded, ortho), the forest overlay preview, and the side tabs: **Tiles** (select, build, install, delete, tile info), **Profile** (performance settings) and **Forest types** (which X-Plane forest grows in each biome and elevation band, plus plantations). |
+| **Build** | Map with tile status (selected, installed, built, outdated, data downloaded), the forest overlay preview, and the side tabs: **Tiles** (select, build, install, delete, tile info), **Profile** (performance settings) and **Forest types** (which X-Plane forest grows in each biome and elevation band, plus plantations). |
 | **Build queue** | Every build or download job, with per-tile steps, progress, log and a final report. |
 | **Data** | What has been downloaded: the OpenStreetMap country file (check for and get newer map data), the biome map, and each tile's data. You can also download data for selected tiles without building them. |
 | **Disk space** | How much space everything takes, and safe clean-ups. |
 | **Settings** | X-Plane folder, where ForestStudio keeps its data, setup checks and credits. |
 
 **Outdated tiles**: if you change the profile or forest types, or update the OpenStreetMap data,
-tiles you already built no longer match. They get a dashed outline on the map. **Select outdated**
+tiles you already built no longer match. They get an orange outline on the map. **Select outdated**
 selects them so you can rebuild them in one go.
 
 **Where your data lives**: downloads, built tiles and your settings are kept in a data folder,

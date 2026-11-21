@@ -190,7 +190,7 @@ tests/                              pytest suite (sandboxed)
 7. **Outdated detection**: stats JSON records `profile`, `region`, `fingerprint` (sha256 of profile +
    rules + `build.BUILD_VERSION`) and `data` (mtimes of worldcover/treecover/lossyear/osm.json).
    `build.outdated_reasons()` compares with the current profile/rules/data; `tile_status(..., profile)`
-   returns `outdated` reasons → dashed outline on the map, **Select outdated**, Tile info "Up to date".
+   returns `outdated` reasons → orange outline on the map, **Select outdated**, Tile info "Up to date".
    Tiles built before fingerprints count as outdated. **Bump `BUILD_VERSION`** when a code change
    alters results so every older tile shows up.
 
@@ -228,8 +228,8 @@ old records without them load as builds. Only one job (build or download) runs a
 
 ## The app (views)
 
-- **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid; tile status colours (ortho,
-  cached, built, installed, selected; **outdated** = dashed); click/shift-click selection
+- **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid; tile status colours (cached,
+  built, installed, selected; **outdated** = orange; no ortho status — not relevant); click/shift-click selection
   (no "select all": the owner selects by hand); **Select outdated**; forest overlay (colour = biome
   or plantation, lilac = scrub, brightness = density, red = cut out, yellow = OSM trees, light blue =
   town trees) with legend; sidebar tabs:

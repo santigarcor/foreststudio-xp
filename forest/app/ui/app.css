@@ -1,7 +1,7 @@
 :root {
   --bg: #11161b; --panel: #171e25; --panel2: #1e2730; --line: #2a3540;
   --text: #dce6ee; --muted: #8a9aa8; --accent: #4cc38a; --accent2: #2f9e6d;
-  --sel: #f5c542; --inst: #4cc38a; --built: #3fa0e0; --cached: #8a7fd6; --ortho: #e08a3f;
+  --sel: #f5c542; --inst: #4cc38a; --built: #3fa0e0; --cached: #8a7fd6; --outdated: #f08c3a;
   --err: #ff6b6b;
 }
 * { box-sizing: border-box; }
@@ -212,8 +212,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   border: 2px solid; }
 .sw.sel { border-color: var(--sel); background: rgba(245, 197, 66, .35); }
 .sw.inst { border-color: var(--inst); } .sw.built { border-color: var(--built); }
-.sw.outdated { border-color: var(--inst); border-style: dashed; }
-.sw.cached { border-color: var(--cached); } .sw.ortho { border-color: var(--ortho); border-style: dashed; }
+.sw.outdated { border-color: var(--outdated); }
+.sw.cached { border-color: var(--cached); }
 .tilelabel { color: #fff; font: 600 11px Consolas, monospace; text-shadow: 0 0 3px #000, 0 0 2px #000;
   background: none; border: 0; white-space: nowrap; }
 .leaflet-container { font: inherit; }
