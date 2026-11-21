@@ -121,7 +121,7 @@ forest/
                    `<file>.json` meta: server date/size/downloaded), status, check_update (HEAD)
     rasters.py     ESA WorldCover 2021 (COG windows), Hansen GFC v1.12 treecover2000 + lossyear
     osm_pbf.py     ONE pass over the Geofabrik .pbf → streams elements into every requested tile's
-                   osm.json (format VERSION 3; old versions re-extracted automatically)
+                   osm.json (format VERSION 4; old versions re-extracted automatically)
     osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
     elevation.py   elevation from X-Plane's own base mesh via DSFTool (no download)
     ecoregions.py  RESOLVE Ecoregions 2017 → clipped Colombia GeoJSON → per-tile raster
@@ -371,9 +371,12 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 ## Parked ideas / not done yet
 
-- Resume an interrupted/cancelled job; packaged Windows release (PyInstaller zip / installer).
-- Later, when the owner asks: scrubland on open ground (Caribbean), town trees where OSM has none,
-  FPS benchmark vs X-World, sharper edges from ortho imagery.
+- First public release: packaged Windows build (PyInstaller zip / installer) as a GitHub Release,
+  version number + changelog (shown in About), README screenshots, issue templates/CONTRIBUTING.
+- Owner checks in the sim: town-tree density, scrub, xeric trees; FPS headroom (frame times with
+  the 60 fps cap off) → maybe raise the medium tree budget / town trees.
+- Test on a real Mac / Linux machine (only CI so far).
 - Other regions (Phase 4) — only when asked.
 - **Not wanted** (owner, 2026-11-21): a "select all Colombia" button (tiles are selected by hand);
-  tree height (too much work for the gain).
+  tree height (too much work for the gain); sharper edges from ortho imagery; resuming an
+  interrupted/cancelled job.
