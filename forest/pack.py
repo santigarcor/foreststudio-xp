@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 from pathlib import Path
 
 from forest import config
@@ -41,8 +42,15 @@ def remove_link(link: Path) -> None:
 
 
 def _is_junction(p: Path) -> bool:
+    """True for a directory junction or a symlink (never follows the link)."""
     try:
-        return os.path.isjunction(p) or p.is_symlink()
+        if p.is_symlink():
+            return True
+        if os.name != "nt":
+            return False
+        # os.path.isjunction is Python 3.12+; read the reparse tag directly so 3.11 works too.
+        st = os.lstat(p)
+        return getattr(st, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
     except OSError:
         return False
 
