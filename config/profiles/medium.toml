@@ -1,0 +1,21 @@
+# Forest Studio performance profile (written by the app).
+
+min_tree_frac = 0.5  # How much forest a spot needs: The satellite map says how much of each ~18 m square is trees. A square gets trees only if at least this share is forest. 0.5 = half. Lower = more trees, also on hedges and lone trees; higher = only solid forest.
+recent_loss_from = 21  # Ignore forest cut since year: Forest that satellite data shows was cut down from this year on is left empty. 21 = since 2021, 1 = since 2001 (removes much more).
+smooth_passes = 2  # Tidy-up passes: Each pass removes lone specks of forest and fills tiny holes, so forests have cleaner shapes. More passes = rounder, simpler forests, fewer details.
+min_area_m2 = 3000  # Smallest forest kept (m²): Forest patches smaller than this are dropped. 3000 m² ≈ a 55 × 55 m patch. Higher = fewer small groves, better performance.
+road_clearance_scale = 1.0  # Road clearance: How wide the tree-free strip along roads is. 1.0 ≈ the paved road plus ~1 m (e.g. 8 m for a residential street, 24 m for a motorway). 0.5 = half, lets street trees touch the road; 0 = ignore roads.
+building_clearance_m = 2.0  # Building clearance (m): Tree-free margin around each building outline. 0 = trees can stand right next to walls; 2 m keeps tree crowns off most roofs.
+cutout_min_cover = 0.5  # Clear a spot when roads/buildings cover: A ~18 m spot loses its trees only if roads, buildings etc. cover at least this share of it. 0.5 = half. Lower = clears more (cleaner streets, fewer city trees); higher = keeps more trees between buildings.
+runway_clearance_m = 75  # Runway clear strip (m): Trees are kept this far from a runway's centre line (each side). Taxiways and aprons get a ~20 m margin. 75 m ≈ an ICAO runway strip.
+clear_airport_grounds = 0  # Clear whole airport grounds (0/1): 1 = no trees anywhere inside the airport boundary from OpenStreetMap. 0 = keep real trees on the grounds (only runways, taxiways and aprons are cleared).
+osm_green_min_frac = 0.25  # Tree share needed in parks & golf: Inside OSM parks, gardens, golf courses and woods, a spot gets trees at this lower satellite tree share (normal: 'How much forest a spot needs'). The satellite map misses tree lines and scattered trees in these places.
+osm_single_trees = 1  # Place OSM single trees (0/1): 1 = put a tree on every tree mapped individually in OpenStreetMap (street trees, gardens, golf). Skipped inside buildings, runway strips and existing forest.
+osm_tree_rows = 1  # Place OSM tree rows (0/1): 1 = plant trees along every tree row mapped in OpenStreetMap (avenues, windbreaks, field edges).
+tile_tree_budget = 27_000_000  # Max trees per tile: The main frame-rate setting. If a tile would have more trees than this, all its forests are thinned evenly until it fits. 30 M is a medium value.
+global_density = 0.7  # Overall thickness: Thins every forest by this factor before the max-trees limit. 1.0 = as thick as X-Plane's forest allows, 0.5 = half the trees.
+density_blur_cells = 2.0  # Soften thickness changes: Blends thick and thin forest into each other so there are fewer sharp steps. Higher = smoother transitions and fewer forest pieces.
+grid_cells = 6000  # Map detail: How finely the tile is analysed. 6000 = squares of ~18 m. Higher = forest edges follow roads and fields more closely, but bigger files and slower builds.
+simplify_m = 12  # Edge smoothing (m): Straightens forest edges by up to this distance, removing the blocky 'staircase' look. About 2/3 of the map detail square works well (12 m at 6000).
+chunks_per_degree = 16  # Split forests into pieces: Big forests are cut into square pieces so X-Plane can skip the ones you can't see. 16 = pieces of ~7 km. Rarely needs changing.
+density_levels = [0.35, 0.65, 1.0]

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foreststudio-xp"
+version = "0.1.0"
+description = "ForestStudio XP: build X-Plane 12 forest overlays from land-cover, biome and OpenStreetMap data"
+readme = "CLAUDE.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.2", "scipy>=1.15", "shapely>=2.1", "rasterio>=1.4", "pyproj>=3.7",
+  "osmium>=4.0",      # reads the Geofabrik .osm.pbf extract
+  "pyshp>=2.3",       # reads the RESOLVE ecoregions shapefile
+  "psutil>=6.0",      # cores / RAM for parallel builds, peak memory per build
+  "pywebview>=6.2",   # the desktop window (Edge WebView2 on Windows)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+forest = "forest.cli:main"
+
+[project.gui-scripts]
+foreststudio-xp = "forest.app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["forest*"]
+
+[tool.setuptools.package-data]
+"forest.app" = ["ui/*", "icons/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::rasterio.errors.NotGeoreferencedWarning"]
+markers = [
+  "integration: slower tests that run the real pipeline on a small synthetic tile",
+  "windows: needs Windows (directory junctions)",
+  "dsftool: needs DSFTool configured in config/local.toml",
+]

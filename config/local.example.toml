@@ -1,0 +1,12 @@
+# Optional. ForestStudio XP detects X-Plane 12 automatically, and the app's Settings view writes
+# config/local.toml for you. Copy this file to config/local.toml only if you prefer to set the
+# path by hand. local.toml is not shared in git.
+# ForestStudio only READS from the X-Plane install, except its own Custom Scenery/forest_* link.
+
+[xplane]
+root = 'C:\X-Plane 12'
+
+# DSFTool is bundled (tools/xptools/<windows|macos|linux>/) and found automatically.
+# Only to use a different DSFTool build, uncomment (used only if the file exists):
+# [tools]
+# dsftool = 'C:\path\to\DSFTool.exe'

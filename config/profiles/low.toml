@@ -1,0 +1,19 @@
+grid_cells = 4000
+min_tree_frac = 0.55
+recent_loss_from = 21
+global_density = 0.6
+density_levels = [0.5, 1.0]
+smooth_passes = 3
+density_blur_cells = 3.0
+min_area_m2 = 6000
+simplify_m = 15
+chunks_per_degree = 8
+tile_tree_budget = 12_000_000
+road_clearance_scale = 1.0     # tree-free strip along roads (1.0 ≈ paved road + ~1 m)
+building_clearance_m = 2.0     # margin around building outlines
+cutout_min_cover = 0.6         # clear an ~18 m spot only if cut-outs cover this share
+runway_clearance_m = 75        # keep trees this far from runway centre lines
+clear_airport_grounds = 0      # 1 = clear the whole OSM airport boundary
+osm_green_min_frac = 0.25      # tree share needed inside OSM parks, gardens, golf courses, woods
+osm_single_trees = 1           # place OSM-mapped single trees (natural=tree)
+osm_tree_rows = 1              # place OSM-mapped tree rows (natural=tree_row)

@@ -1,0 +1,240 @@
+# Forest types for Colombia: biome (from RESOLVE Ecoregions 2017) × elevation band.
+# Every asset MUST be evergreen (no EXPORT_SEASON variants): XP12 season rasters put the
+# Andean highlands in "winter" for months. The build refuses seasonal assets.
+# A cell uses `dense` when its tree density >= sparse_below, otherwise `sparse`.
+# Ecoregions not listed in any biome use the "default" biome.
+
+sparse_below = 0.45
+
+# Asset for OSM single trees and tree rows (must be evergreen).
+single_tree = "lib/vegetation/forests/mixed/very_hot.for"
+
+# Plantations from OpenStreetMap (landuse=orchard/plantation/vineyard, farmland with crop/trees,
+# forest with leaf_type). The first rule whose `match` fits wins. Each match entry is
+# "key=value", or several joined with "&" (all must fit); values are case-insensitive.
+# Inside a plantation the biome's forest type is replaced and trees are planted regardless of
+# the satellite tree share. asset = "" means "no trees" (e.g. sugar cane, pineapple).
+[[plantation]]
+name = "oil_palm"
+label = "Oil palm"
+color = [230, 120, 40]
+match = ["trees=oil_palms", "genus=Elaeis", "crop=palm_fruit", "crop=oil_palm", "produce=palm_oil"]
+asset = "lib/vegetation/trees/palm/date_palm_small.for"
+density = 0.8
+
+[[plantation]]
+name = "coconut"
+label = "Coconut palm"
+color = [240, 200, 80]
+match = ["trees=coconut_palms", "crop=coconut", "produce=coconut"]
+asset = "lib/vegetation/trees/palm/coconut_palm_medium.for"
+density = 0.7
+
+[[plantation]]
+name = "banana"
+label = "Banana / plantain"
+color = [200, 230, 60]
+match = ["trees=banana_plants", "crop=banana", "crop=plantain", "crop=platain", "crop=platano", "produce=banana"]
+asset = "lib/vegetation/trees/evergreen/banana_plant.for"
+density = 0.7
+
+[[plantation]]
+name = "coffee"
+label = "Coffee (with shade trees)"
+color = [150, 90, 60]
+match = ["trees=coffea_plants", "genus=Coffea", "crop=coffee", "crop=cafe", "crop=café", "produce=coffee"]
+asset = "lib/g8/shrb_vhot_wet.for"
+density = 0.6
+
+[[plantation]]
+name = "rubber"
+label = "Rubber"
+color = [120, 110, 200]
+match = ["trees=rubber_trees", "genus=Hevea"]
+asset = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"
+density = 0.6
+
+[[plantation]]
+name = "conifer"
+label = "Pine / cypress plantation"
+color = [70, 120, 160]
+match = ["landuse=forest&leaf_type=needleleaved", "genus=Pinus", "genus=Cupressus", "trees=pine_trees"]
+asset = "lib/vegetation/trees/coniferous/pine_medium.for"
+density = 0.7
+
+[[plantation]]
+name = "eucalyptus"
+label = "Eucalyptus"
+color = [110, 170, 190]
+match = ["genus=Eucalyptus", "trees=eucalyptus_trees"]
+asset = "lib/vegetation/trees/evergreen/kapok_tree_thin.for"
+density = 0.7
+
+[[plantation]]
+name = "no_trees"
+label = "Crops without trees (sugar cane, pineapple, rice…)"
+color = [200, 200, 200]
+match = ["crop=sugarcane", "produce=sugarcane", "produce=sugar_cane", "trees=pineapple_plants",
+  "crop=pineapple", "crop=piña", "crop=rice", "crop=corn", "crop=soy", "crop=grass", "crop=meadow"]
+asset = ""
+density = 0.0
+
+[[plantation]]
+name = "orchard"
+label = "Other orchards (fruit trees)"
+color = [210, 90, 150]
+match = ["landuse=orchard", "landuse=plantation", "trees=orange_trees", "trees=guava_trees",
+  "trees=mango_trees", "trees=citrus_trees", "trees=avocado_trees"]
+asset = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"
+density = 0.5
+
+[[biome]]
+name = "rainforest"
+label = "Humid lowland rainforest (Amazon, Chocó, Magdalena-Urabá, Catatumbo)"
+color = [0, 110, 55]
+ecoregions = [
+  "Napo moist forests", "Caqueta moist forests", "Solimões-Japurá moist forests",
+  "Negro-Branco moist forests", "Japurá-Solimões-Negro moist forests", "Purus várzea",
+  "Iquitos várzea", "Southwest Amazon moist forests", "Juruá-Purus moist forests",
+  "Ucayali moist forests", "Rio Negro campinarana", "Guianan piedmont moist forests",
+  "Guianan Highlands moist forests", "Magdalena-Urabá moist forests", "Chocó-Darién moist forests",
+  "Catatumbo moist forests", "Isthmian-Atlantic moist forests", "Western Ecuador moist forests",
+  "Cayos Miskitos-San Andrés and Providencia moist forests", "South American Pacific mangroves",
+]
+[[biome.band]]
+name = "lowland"
+elev_max = 1200
+dense = "lib/g8/rainforest_vhot_rain.for"
+sparse = "lib/g8/broad_sp_vhot_wet.for"
+[[biome.band]]
+name = "foothills"
+elev_max = 2200
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/mixed_sp_vhot_wet.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/g8/coni_sp_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_dry.for"
+
+[[biome]]
+name = "montane"
+label = "Andean montane & cloud forest (Cordilleras, Cauca/Magdalena slopes, Santa Marta)"
+color = [60, 175, 75]
+ecoregions = [
+  "Magdalena Valley montane forests", "Northwest Andean montane forests",
+  "Cordillera Oriental montane forests", "Eastern Cordillera Real montane forests",
+  "Cauca Valley montane forests", "Venezuelan Andes montane forests", "Santa Marta montane forests",
+  "Cordillera La Costa montane forests", "Eastern Panamanian montane forests",
+  "Pantepui forests & shrublands",
+]
+[[biome.band]]
+name = "premontane"
+elev_max = 1900
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/mixed_sp_vhot_wet.for"
+[[biome.band]]
+name = "andean"
+elev_max = 3000
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/coni_sp_vhot_wet.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/g8/coni_sp_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_dry.for"
+
+[[biome]]
+name = "dry_forest"
+label = "Tropical dry forest (Cauca, Magdalena, Patía, Sinú valleys; Apure-Villavicencio)"
+color = [175, 160, 50]
+ecoregions = [
+  "Cauca Valley dry forests", "Magdalena Valley dry forests", "Patía valley dry forests",
+  "Sinú Valley dry forests", "Apure-Villavicencio dry forests", "Maracaibo dry forests",
+  "Lara-Falcón dry forests", "Amazon-Orinoco-Southern Caribbean mangroves",
+]
+[[biome.band]]
+name = "valley"
+elev_max = 1500
+dense = "lib/vegetation/forests/broadleaves/hot_dry.for"
+sparse = "lib/g8/broad_sp_hot_sdry.for"
+[[biome.band]]
+name = "slopes"
+elev_max = 9000
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/mixed_sp_vhot_wet.for"
+
+[[biome]]
+name = "xeric"
+label = "Xeric scrub (La Guajira, Barranquilla coast)"
+color = [215, 135, 60]
+ecoregions = [
+  "Guajira-Barranquilla xeric scrub", "La Costa xeric shrublands", "Paraguaná xeric scrub",
+  "Caribbean shrublands", "Malpelo Island xeric scrub",
+]
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/shrb_vhot_dry.for"
+sparse = "lib/g8/sparse_vhot_dry.for"
+
+[[biome]]
+name = "savanna"
+label = "Llanos savanna with gallery forest (moriche palms)"
+color = [150, 205, 70]
+ecoregions = ["Llanos"]
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/broad_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_sdry.for"
+
+[[biome]]
+name = "mangrove"
+label = "Mangroves (from WorldCover's 10 m mangrove class, both coasts)"
+color = [40, 160, 170]
+# Filled from WorldCover's mangrove class, not ecoregions: the RESOLVE mangrove polygons are
+# coarse and reach far inland (they now count as dry forest / rainforest, see those biomes).
+ecoregions = []
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/wetl_wdy_vhot_rain.for"
+sparse = "lib/g8/wetl_shrb_vhot_wet.for"
+
+[[biome]]
+name = "paramo"
+label = "Páramo (high Andes)"
+color = [185, 180, 140]
+ecoregions = ["Northern Andean páramo", "Cordillera de Merida páramo", "Santa Marta páramo"]
+[[biome.band]]
+name = "upper forest"
+elev_max = 3200
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/coni_sp_vhot_wet.for"
+[[biome.band]]
+name = "páramo"
+elev_max = 9000
+dense = "lib/g8/coni_sp_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_dry.for"
+
+[[biome]]
+name = "default"
+label = "Everything else (ecoregions not listed above)"
+color = [110, 140, 110]
+ecoregions = []
+[[biome.band]]
+name = "lowland"
+elev_max = 1000
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/broad_sp_vhot_wet.for"
+[[biome.band]]
+name = "andean"
+elev_max = 3000
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/coni_sp_vhot_wet.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/g8/coni_sp_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_dry.for"
