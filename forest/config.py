@@ -119,6 +119,7 @@ def xplane_candidates() -> list[Path]:
     # 2) Steam libraries (libraryfolders.vdf lists every library path).
     steam_roots = [Path(p) for p in (r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam",
                                      os.path.expanduser("~/.steam/steam"),
+                                     os.path.expanduser("~/.local/share/Steam"),
                                      os.path.expanduser("~/Library/Application Support/Steam"))]
     libs: list[Path] = []
     for root in steam_roots:
@@ -129,11 +130,16 @@ def xplane_candidates() -> list[Path]:
         except OSError:
             pass
         libs.append(root)
-    for drive in "CDEFG":
-        libs += [Path(f"{drive}:/Steam"), Path(f"{drive}:/Games/Steam"), Path(f"{drive}:/SteamLibrary")]
+    if sys.platform == "win32":
+        for drive in "CDEFG":
+            libs += [Path(f"{drive}:/Steam"), Path(f"{drive}:/Games/Steam"), Path(f"{drive}:/SteamLibrary")]
     out += [lib / "steamapps" / "common" / "X-Plane 12" for lib in libs]
     # 3) Common stand-alone installer locations.
-    out += [Path.home() / "Desktop" / "X-Plane 12", Path("C:/X-Plane 12"), Path("D:/X-Plane 12")]
+    out += [Path.home() / "Desktop" / "X-Plane 12", Path.home() / "X-Plane 12"]
+    if sys.platform == "win32":
+        out += [Path("C:/X-Plane 12"), Path("D:/X-Plane 12")]
+    elif sys.platform == "darwin":
+        out += [Path("/Applications/X-Plane 12")]
     seen, uniq = set(), []
     for p in out:
         key = str(p).lower().rstrip("\\/")
@@ -160,6 +166,16 @@ def dsftool_candidates() -> list[Path]:
     out += [p / "tools" / DSFTOOL_EXE for p in sorted(REPO_ROOT.glob("xptools_*"))]
     out += [REPO_ROOT / "tools" / "xptools" / DSFTOOL_EXE, REPO_ROOT / "tools" / DSFTOOL_EXE]
     return out
+
+
+def _ensure_executable(p: Path) -> None:
+    """macOS/Linux: a DSFTool from a zip download may have lost its executable bit."""
+    if sys.platform == "win32" or not p.is_file() or os.access(p, os.X_OK):
+        return
+    try:
+        p.chmod(p.stat().st_mode | 0o111)
+    except OSError:
+        pass  # read-only install: check_dsftool / the build log will say it can't run
 
 
 def detect_dsftool() -> Path | None:
@@ -212,6 +228,7 @@ def load(path: Path | None = None) -> LocalConfig:
         if not ds.is_file():
             ds = None
     ds = ds or detect_dsftool() or BUNDLED_DSFTOOL
+    _ensure_executable(ds)
     return LocalConfig(xplane_root=xp, dsftool=ds, from_file=bool(xp_s))
 
 

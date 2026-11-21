@@ -22,6 +22,7 @@ from forest import config
 JOBS_DIR = config.CACHE_ROOT / "jobs"
 STEPS = ["data", "classify", "vectorise", "compile"]
 STEP_LABELS = {"data": "Data", "classify": "Classify", "vectorise": "Vectorise", "compile": "Compile"}
+KINDS = {"build": "Build", "data": "Download data", "osm_update": "Update OSM data"}
 
 # Log lines that move a tile from one step to the next (see build.py / cli.py output).
 _TILE_RASTERS = re.compile(r"^([+-]\d{2}[+-]\d{3}): rasters ready")
@@ -39,13 +40,17 @@ class JobRecord:
 
     # ---------- create / load ----------
     @classmethod
-    def new(cls, tiles: list[str], profile: str, region: str, workers: int) -> "JobRecord":
+    def new(cls, tiles: list[str], profile: str, region: str, workers: int,
+            kind: str = "build") -> "JobRecord":
+        """kind: build (all steps) | data / osm_update (download only: the Data step)."""
         jid = datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
+        steps = STEPS if kind == "build" else ["data"]
         rec = cls({
-            "id": jid, "created": _now(), "ended": None, "status": "running",
+            "id": jid, "created": _now(), "ended": None, "status": "running", "kind": kind,
+            "step_names": steps,
             "profile": profile, "region": region, "workers": workers, "tiles": list(tiles),
             "steps": {t: {s: {"status": "pending", "started": None, "seconds": None, "note": ""}
-                          for s in STEPS} for t in tiles},
+                          for s in steps} for t in tiles},
             "results": {}, "error": "", "log_lines": 0,
         })
         rec.save()
@@ -58,6 +63,14 @@ class JobRecord:
             return cls(json.loads(p.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             return None
+
+    @property
+    def kind(self) -> str:
+        return self.d.get("kind", "build")
+
+    @property
+    def step_names(self) -> list[str]:
+        return self.d.get("step_names", STEPS)
 
     @property
     def id(self) -> str:
@@ -126,37 +139,44 @@ class JobRecord:
     def tile_finished(self, tile: str, rc: int, last_lines: list[str], result: dict | None) -> None:
         steps = self.d["steps"].get(tile, {})
         if rc == 0:
-            for s in STEPS:
+            for s in self.step_names:
                 if steps[s]["status"] in ("pending", "running"):
                     self.step(tile, s, "done")
         else:
-            failed = next((s for s in STEPS if steps[s]["status"] == "running"),
-                          next((s for s in STEPS if steps[s]["status"] == "pending"), "compile"))
+            failed = next((s for s in self.step_names if steps[s]["status"] == "running"),
+                          next((s for s in self.step_names if steps[s]["status"] == "pending"), self.step_names[-1]))
             err = next((ln for ln in reversed(last_lines) if ln.strip()), f"exit code {rc}")
             self.step(tile, failed, "failed", err.strip()[:300])
-            for s in STEPS[STEPS.index(failed) + 1:]:
+            for s in self.step_names[self.step_names.index(failed) + 1:]:
                 self.step(tile, s, "skipped")
         with self.lock:
             self.d["results"][tile] = {"ok": rc == 0, **(result or {}),
                                       **({} if rc == 0 else {"error": "\n".join(last_lines[-6:])})}
         self.save()
 
-    def finish(self, cancelled: bool = False) -> None:
+    def finish(self, cancelled: bool = False, rc: int = 0) -> None:
         with self.lock:
             res = self.d["results"]
+            if self.kind != "build":   # download jobs: a tile is ok when its Data step finished
+                for t in self.d["tiles"]:
+                    st = self.d["steps"][t]["data"]
+                    if st["status"] == "running" and rc == 0 and not cancelled:
+                        st["status"] = "done"
+                    res[t] = {"ok": st["status"] == "done",
+                              **({} if st["status"] == "done" else {"error": st.get("note") or "not downloaded"})}
             failed = [t for t, r in res.items() if not r.get("ok")]
             self.d["ended"] = _now()
             self.d["status"] = ("cancelled" if cancelled else "failed" if failed and len(failed) == len(self.d["tiles"])
                                 else "partial" if failed else "done")
             for t in self.d["tiles"]:  # tiles never started (cancel): mark their steps skipped
-                for s in STEPS:
+                for s in self.step_names:
                     if self.d["steps"][t][s]["status"] in ("pending", "running"):
                         self.d["steps"][t][s]["status"] = "skipped"
         self.save()
 
     # ---------- views ----------
     def progress(self) -> float:
-        total = len(self.d["tiles"]) * len(STEPS) or 1
+        total = len(self.d["tiles"]) * len(self.step_names) or 1
         done = sum(1 for t in self.d["steps"].values() for s in t.values()
                    if s["status"] in ("done", "failed", "skipped"))
         return round(done / total, 3)
@@ -166,7 +186,7 @@ class JobRecord:
         ok = [r for r in res.values() if r.get("ok")]
         end = self.d["ended"] or _now()
         return {
-            "id": self.id, "created": self.d["created"], "status": self.d["status"],
+            "id": self.id, "created": self.d["created"], "status": self.d["status"], "kind": self.kind,
             "profile": self.d["profile"], "region": self.d["region"], "workers": self.d["workers"],
             "tiles": self.d["tiles"], "progress": self.progress(),
             "elapsed": round(end - self.d["created"], 1),
@@ -178,7 +198,7 @@ class JobRecord:
         res = self.d["results"]
         ok = [r for r in res.values() if r.get("ok")]
         per_step = {}
-        for s in STEPS:
+        for s in self.step_names:
             secs = [t[s]["seconds"] for t in self.d["steps"].values() if t[s]["seconds"] is not None]
             per_step[s] = {
                 "done": sum(1 for t in self.d["steps"].values() if t[s]["status"] == "done"),
@@ -198,7 +218,8 @@ class JobRecord:
     def full(self) -> dict:
         return {**self.summary(), "steps": self.d["steps"], "results": self.d["results"],
                 "report": self.report(), "log_lines": self.d.get("log_lines", 0),
-                "error": self.d.get("error", ""), "step_names": STEPS, "step_labels": STEP_LABELS}
+                "error": self.d.get("error", ""), "step_names": self.step_names, "step_labels": STEP_LABELS,
+                "kind_label": KINDS.get(self.kind, self.kind)}
 
 
 # ---------- module helpers ----------

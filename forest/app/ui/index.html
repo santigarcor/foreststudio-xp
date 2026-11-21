@@ -13,6 +13,7 @@
   <nav class="views" id="views">
     <button data-view="build" class="on">Build</button>
     <button data-view="works">Build queue</button>
+    <button data-view="data">Data</button>
     <button data-view="disk">Disk space</button>
     <button data-view="appsettings">Settings</button>
   </nav>
@@ -35,6 +36,7 @@
       <span><i class="sw sel"></i>selected</span>
       <span><i class="sw inst"></i>installed</span>
       <span><i class="sw built"></i>built</span>
+      <span><i class="sw outdated"></i>outdated</span>
       <span><i class="sw cached"></i>data cached</span>
       <span><i class="sw ortho"></i>has ortho</span>
     </div>
@@ -53,8 +55,10 @@
       <div class="row wrap">
         <button id="selOrtho" class="ghost">Select ortho tiles</button>
         <button id="selBuilt" class="ghost">Select built</button>
+        <button id="selOutdated" class="ghost" title="Built tiles whose profile, forest types or downloaded data changed since they were built">Select outdated</button>
         <button id="selClear" class="ghost">Clear</button>
       </div>
+      <div id="selMsg" class="msg"></div>
       <div id="selList" class="chips"></div>
 
       <h3>X-Plane pack</h3>
@@ -156,6 +160,35 @@
   </div>
 </main>
 
+<!-- ============ Data: downloaded source data ============ -->
+<main id="view-data" class="view page">
+  <div class="page-inner">
+    <div class="row between"><h2>Data</h2><button id="dataRefresh" class="ghost">Refresh</button></div>
+    <p class="hint">The maps ForestStudio builds forests from. Everything is downloaded automatically when you
+      build a tile; here you can see what you have, download data ahead of time, and get newer OpenStreetMap data.</p>
+    <div class="datacards">
+      <div class="info datacard" id="dcOsm"></div>
+      <div class="info datacard" id="dcEco"></div>
+      <div class="info datacard" id="dcSat">
+        <h3>Satellite maps</h3>
+        <p class="hint">Land cover (ESA WorldCover 2021, 10 m) and tree cover / forest loss (Hansen Global
+          Forest Change 2000–2024, 30 m), downloaded per tile. These are fixed releases, so there's nothing
+          to update.</p>
+      </div>
+    </div>
+    <div id="dataMsg2" class="msg"></div>
+    <div class="row between">
+      <h3>Tiles with downloaded data <span id="dataCount" class="hint"></span></h3>
+      <div class="row">
+        <button id="dataFetchSel" class="ghost" title="Download data for the tiles selected on the Build map, without building them">Download for map selection</button>
+        <button id="dataSelMap" class="ghost" disabled>Select checked on map</button>
+        <button id="dataDelete" class="ghost danger" disabled>Delete checked data…</button>
+      </div>
+    </div>
+    <div id="dataTiles"></div>
+  </div>
+</main>
+
 <!-- ============ Disk space ============ -->
 <main id="view-disk" class="view page">
   <div class="page-inner">
@@ -198,6 +231,12 @@
     <div id="dataMsg" class="msg"></div>
     <h3>Setup checks</h3>
     <div id="setupChecks" class="checks"></div>
+
+    <h3>About</h3>
+    <p class="hint">ForestStudio XP builds X-Plane 12 forest scenery from free satellite and map data.
+      Open source (GPL-3.0): <code>github.com/santigarcor/foreststudio-xp</code>. Every built pack includes
+      a <code>CREDITS.txt</code> with the notices below, which the data licenses require.</p>
+    <div id="aboutCredits"></div>
   </div>
 </main>
 

@@ -212,6 +212,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   border: 2px solid; }
 .sw.sel { border-color: var(--sel); background: rgba(245, 197, 66, .35); }
 .sw.inst { border-color: var(--inst); } .sw.built { border-color: var(--built); }
+.sw.outdated { border-color: var(--inst); border-style: dashed; }
 .sw.cached { border-color: var(--cached); } .sw.ortho { border-color: var(--ortho); border-style: dashed; }
 .tilelabel { color: #fff; font: 600 11px Consolas, monospace; text-shadow: 0 0 3px #000, 0 0 2px #000;
   background: none; border: 0; white-space: nowrap; }
@@ -242,3 +243,12 @@ a.link { color: var(--accent); font-size: 12.5px; text-decoration: none; display
 a.link:hover { text-decoration: underline; }
 .hint.err { color: var(--err); }
 #dataSource { width: auto; color: var(--muted); font-size: 12px; }
+/* Data view */
+.datacards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 12px 0; }
+.datacard h3 { margin-top: 0; }
+.datacard .row { margin-top: 8px; }
+.datatable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.datatable th, .datatable td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.datatable th { color: var(--muted); font-weight: 500; }
+.datatable .ok { color: var(--accent); } .datatable .bad { color: var(--err); } .datatable .warn { color: var(--sel); }
+.credits td:first-child { width: 34%; vertical-align: top; } .credits td { vertical-align: top; }

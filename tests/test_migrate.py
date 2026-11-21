@@ -1,7 +1,6 @@
 """Old in-repository data moves to the data folder once, without overwriting anything."""
 
 import os
-import sys
 
 import pytest
 
@@ -49,14 +48,12 @@ def test_default_profiles_are_seeded_not_overwritten(sandbox):
     assert mine.read_text() == "grid_cells = 1\n"                                # user's kept
 
 
-@pytest.mark.windows
-@pytest.mark.skipif(sys.platform != "win32", reason="directory junctions are Windows-only")
 def test_xplane_link_is_repointed(sandbox):
-    import _winapi
+    from forest import pack
 
     _old_layout(sandbox.repo)
     link = sandbox.xplane / "Custom Scenery" / "forest_colombia"
-    _winapi.CreateJunction(str(sandbox.repo / "out" / "forest_colombia"), str(link))
+    pack.make_link(sandbox.repo / "out" / "forest_colombia", link)
     migrate.run()
     assert os.path.realpath(link).lower() == str((sandbox.out / "forest_colombia").resolve()).lower()
     assert (link / "Earth nav data" / "+00-080" / "+06-076.dsf").exists()

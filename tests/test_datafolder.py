@@ -1,7 +1,6 @@
 """Changing the data folder from Settings (all in temp folders)."""
 
 import os
-import sys
 
 import pytest
 
@@ -76,15 +75,12 @@ def test_switch_to_existing_data_moves_nothing(home, tmp_path):
     assert (home.root / "cache" / "tiles" / "+06-076" / "osm.json").exists()   # untouched
 
 
-@pytest.mark.windows
-@pytest.mark.skipif(sys.platform != "win32", reason="directory junctions are Windows-only")
 def test_xplane_link_follows_the_move(home, tmp_path):
-    import _winapi
+    from forest import pack
 
-    pack = home.out / "forest_colombia" / "Earth nav data"
-    pack.mkdir(parents=True)
+    (home.out / "forest_colombia" / "Earth nav data").mkdir(parents=True)
     link = home.xplane / "Custom Scenery" / "forest_colombia"
-    _winapi.CreateJunction(str(home.out / "forest_colombia"), str(link))
+    pack.make_link(home.out / "forest_colombia", link)
     new = tmp_path / "FS2"
     datafolder.change(str(new))
     assert os.path.realpath(link).lower() == str((new / "out" / "forest_colombia").resolve()).lower()

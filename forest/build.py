@@ -8,6 +8,7 @@ worldcover + hansen + OSM + base-mesh elevation
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -499,6 +500,52 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
         dst.write(img)
 
 
+# Bump when a change to the build itself (not the settings) changes the result, so every tile
+# built before shows up as outdated.
+BUILD_VERSION = 1
+DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json")
+
+
+def settings_fingerprint(s: Settings) -> str:
+    """Short hash of everything that decides how a tile looks: profile, forest types, build."""
+    blob = json.dumps({"build": BUILD_VERSION, "profile": s.profile, "rules": s.rules},
+                      sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def data_stamp(tile: Tile) -> dict:
+    """When each input file of the tile was last downloaded/extracted (unix seconds)."""
+    out = {}
+    for n in DATA_FILES:
+        p = tile.cache_path / n
+        if p.exists():
+            out[n] = int(p.stat().st_mtime)
+    return out
+
+
+def outdated_reasons(stats: dict | None, tile: Tile, profile: str, region: str,
+                     fingerprint: str | None = None) -> list[str]:
+    """Why a built tile no longer matches the current settings/data ([] = up to date)."""
+    if not stats:
+        return ["no build record"]
+    reasons = []
+    if not stats.get("fingerprint"):
+        return ["built before ForestStudio tracked settings"]
+    if stats.get("profile") != profile:
+        reasons.append(f"built with profile '{stats.get('profile')}'")
+    elif stats.get("region", region) != region:
+        reasons.append(f"built for region '{stats.get('region')}'")
+    else:
+        fp = fingerprint or settings_fingerprint(Settings.load(profile, region))
+        if stats["fingerprint"] != fp:
+            reasons.append("profile or forest types changed")
+    old, now = stats.get("data", {}), data_stamp(tile)
+    changed = [n for n, t in now.items() if old.get(n) and t > old[n] + 1]
+    if changed:
+        reasons.append("newer data: " + ", ".join(sorted(changed)))
+    return reasons
+
+
 def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") -> Path:
     """Build one tile. Writes the DSF text and the app's files (overlay, preview, stats) to
     out/studio_<region>/ and returns the text path; compiling puts the .dsf in the pack."""
@@ -524,7 +571,8 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
                           for i, b in enumerate(c["biomes"]) if (c["trees"] & (c["biome_idx"] == i)).any()}
     stats["plantation_km2"] = {pr["name"]: round(float((c["plant_idx"] == i).sum()) * cell_km2, 1)
                                for i, pr in enumerate(c.get("plants", [])) if (c["plant_idx"] == i).any()}
-    stats.update(tile=tile.name, profile=profile, polygons=len(polys),
+    stats.update(tile=tile.name, profile=profile, region=region, polygons=len(polys),
+                 fingerprint=settings_fingerprint(s), data=data_stamp(tile), build_version=BUILD_VERSION,
                  exclusion_cells=c["excl_stats"], seconds=round(time.time() - t0, 1))
     studio_path(region, tile, ".stats.json").write_text(json.dumps(stats, indent=1), encoding="utf-8")
     _log(f"wrote {txt}", t0)

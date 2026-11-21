@@ -372,3 +372,20 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - Settings → **Data folder**: pick another folder (e.g. another drive) or go back to the default;
   data is moved (or switched to an existing data folder), X-Plane links re-pointed, the choice kept in
   `~/.foreststudio/location.toml`, then the app restarts. `FORESTSTUDIO_HOME` overrides and locks it.
+
+### 2026-11-21 — Open-source readiness, Data view, outdated tiles
+
+- `README.md` for users (install, first run, scenery order, views, credits); pyproject readme →
+  README.md, `license-files = ["LICENSE"]`.
+- Credits: `forest/credits.py` → Settings → About and `CREDITS.txt` in every built pack (ODbL needs a
+  notice on produced works; ESA/Hansen/RESOLVE are CC BY 4.0).
+- CI: GitHub Actions on Windows (3.11, 3.13), Ubuntu, macOS (3.12).
+- macOS/Linux: bundled DSFTool for both (from XPTools 24-5 mac universal / linux x86-64), symlink
+  install, extra X-Plane detection paths. Untested on real machines.
+- Select outdated: build stats now carry a settings fingerprint + data dates; dashed outline on map.
+  All 34 existing tiles show as outdated (built before fingerprints).
+- Data view: OSM country file / ecoregions status, download, check for update (HEAD to Geofabrik)
+  and update (+ re-extract tiles), per-tile data table, download for map selection. Found that the
+  app never downloaded the .pbf / ecoregions itself (they had been fetched by hand): fetch now
+  downloads them when missing. First update check: Geofabrik's file was ~6 h newer than ours.
+- Dropped from the plan by the owner: "select all Colombia" (manual selection) and tree height.

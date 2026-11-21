@@ -60,6 +60,7 @@ function tileStyle(name) {
   if (s.cached) { color = "#8a7fd6"; opacity = 0.95; dash = null; weight = 1.4; }
   if (s.built) { color = "#3fa0e0"; opacity = 1; weight = 1.8; dash = null; }
   if (s.installed) { color = "#4cc38a"; opacity = 1; weight = 2.2; dash = null; }
+  if (s.built && s.outdated && s.outdated.length) { dash = "7 5"; }   // built, but settings/data changed
   return {
     color, weight, opacity, dashArray: dash,
     fillColor: sel ? "#f5c542" : "#000",
@@ -150,7 +151,7 @@ async function reloadOverlay(name) {
 }
 
 async function refreshStatus() {
-  status = await api().tile_status($("#region").value);
+  status = await api().tile_status($("#region").value, "", $("#profile").value);
   await refreshPack();
   drawTiles();
   await refreshOverlays();
@@ -270,6 +271,7 @@ async function showTileInfo(name) {
   const s = status[name] || {};
   const flags = [["Land tile (base mesh)", s.land], ["Ortho (OrthoStudio)", s.ortho], ["Data cached", s.cached],
     ["Built", s.built],
+    ["Up to date", !s.built ? false : (s.outdated && s.outdated.length ? "no — " + s.outdated.join("; ") : "yes")],
     ["In X-Plane", s.installed ? "yes (pack linked)" : (s.built ? "no — pack not installed" : false)]];
   const info = $("#tileInfo"); info.innerHTML = "";
   info.append(el("div", {}, el("b", {}, name)));
@@ -368,6 +370,7 @@ async function saveProfile(name) {
   msg("#profMsg", `Saved ${name}.toml`);
   await fillSelect("#profile", (await api().get_state()).profiles, name);
   await loadProfile();
+  refreshStatus();   // outdated tiles depend on the profile
   return true;
 }
 
@@ -551,7 +554,7 @@ async function poll() {
   const total = window._buildTotal || 1, n = j.done.length + j.failed.length;
   $("#progress div").style.width = `${100 * n / total}%`;
   $("#progressText").textContent = j.running
-    ? `Building ${j.current || "…"} · ${n}/${total} done${j.failed.length ? ` · ${j.failed.length} failed` : ""}`
+    ? `${/^(download|updat)/.test(j.current || "") ? j.current[0].toUpperCase() + j.current.slice(1) : `Building ${j.current || "…"}`} · ${n}/${total} done${j.failed.length ? ` · ${j.failed.length} failed` : ""}`
     : (n ? `Finished: ${j.done.length} ok${j.failed.length ? `, ${j.failed.length} failed` : ""}` : "");
   if (j.running && j.workers > 1) $("#progressText").textContent += ` · ${j.workers} at a time`;
   const sbJob = $("#sbJob");
@@ -609,6 +612,7 @@ async function init() {
   $("#profile").onchange = async () => {
     if (profileDirty() && !confirm("Discard unsaved profile changes?")) return;
     await loadProfile();
+    await refreshStatus();
   };
   $("#region").onchange = async () => { await loadRules(); Object.keys(overlays).forEach(reloadOverlay); await refreshStatus(); };
   $("#packInstall").onclick = async () => {
@@ -631,7 +635,7 @@ async function init() {
   $("#rulesRevert").onclick = loadRules;
   $("#rulesSave").onclick = async () => {
     const r = await api().save_rules($("#region").value, rules);
-    if (r.ok) { msg("#rulesMsg", "Saved."); loadRules(); } else msg("#rulesMsg", r.error, true);
+    if (r.ok) { msg("#rulesMsg", "Saved."); loadRules(); refreshStatus(); } else msg("#rulesMsg", r.error, true);
   };
   $("#addPlant").onclick = () => {
     rules.plantation ||= [];
@@ -649,6 +653,12 @@ async function init() {
   $("#selClear").onclick = () => { selected.clear(); renderSelection(); drawTiles(); };
   $("#selOrtho").onclick = () => { for (const [n, s] of Object.entries(status)) if (s.ortho) selected.add(n); renderSelection(); drawTiles(); };
   $("#selBuilt").onclick = () => { for (const [n, s] of Object.entries(status)) if (s.built) selected.add(n); renderSelection(); drawTiles(); };
+  $("#selOutdated").onclick = () => {
+    const out = Object.entries(status).filter(([, s]) => s.outdated && s.outdated.length);
+    out.forEach(([n]) => selected.add(n)); renderSelection(); drawTiles();
+    msg("#selMsg", out.length ? `${out.length} built tile(s) don't match the current profile, forest types or data.`
+      : "All built tiles are up to date.");
+  };
   $("#build").onclick = startBuild;
   $("#cancel").onclick = () => api().cancel_build();
   $("#delete").onclick = openDelete;

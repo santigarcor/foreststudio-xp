@@ -12,10 +12,12 @@ uses it to compile each forest tile and to read elevation from X-Plane's base me
   section "Installation, system requirements and licensing").
 - Usage reference: `README.dsf2text`.
 
-| Platform | File |
-|---|---|
-| Windows | `windows/DSFTool.exe` |
-| macOS / Linux | not bundled yet: download XPTools for your system and set the path in **Settings** |
+| Platform | File | Build |
+|---|---|---|
+| Windows | `windows/DSFTool.exe` | x86-64 |
+| macOS | `macos/DSFTool` | universal (Intel x86-64 + Apple Silicon arm64) |
+| Linux | `linux/DSFTool` | x86-64 (glibc) |
 
-ForestStudio finds the bundled tool automatically. A different DSFTool can be chosen in the
-app's **Settings** view (stored in `config/local.toml`).
+ForestStudio picks the file for the system it runs on (and marks it executable on macOS/Linux
+if needed). A different DSFTool can be set by hand in `~/.foreststudio/config/local.toml`
+(`[tools] dsftool = '...'`); it's used only if that file exists.

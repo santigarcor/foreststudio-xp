@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "foreststudio-xp"
 version = "0.1.0"
 description = "ForestStudio XP: build X-Plane 12 forest overlays from land-cover, biome and OpenStreetMap data"
-readme = "CLAUDE.md"
+readme = "README.md"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.2", "scipy>=1.15", "shapely>=2.1", "rasterio>=1.4", "pyproj>=3.7",
@@ -36,6 +37,5 @@ testpaths = ["tests"]
 filterwarnings = ["ignore::rasterio.errors.NotGeoreferencedWarning"]
 markers = [
   "integration: slower tests that run the real pipeline on a small synthetic tile",
-  "windows: needs Windows (directory junctions)",
-  "dsftool: needs DSFTool configured in config/local.toml",
+  "dsftool: compiles with the bundled DSFTool for this system",
 ]

@@ -85,7 +85,7 @@ def run() -> list[str]:
     for src, dst in pairs[1:]:
         if src.exists():
             _move(src, dst, notes)
-    if relink and os.name == "nt":
+    if relink:
         from forest import pack
 
         for region in relink:

@@ -14,6 +14,7 @@ function showView(name) {
   if (name === "build" && typeof map !== "undefined" && map) setTimeout(() => map.invalidateSize(), 50);
   if (name === "works") refreshWorks();
   if (name === "disk") refreshDisk();
+  if (name === "data") refreshData();
   if (name === "appsettings") loadAppSettings();
 }
 
@@ -42,6 +43,7 @@ async function refreshStatusbarDisk() {
 }
 
 /* ---------------- Build queue ---------------- */
+const KIND_TXT = { data: "Download data", osm_update: "Update OSM data" };   // build jobs show the profile
 const STATUS_TXT = { running: "running", done: "done", partial: "partly failed", failed: "failed",
   cancelled: "cancelled", interrupted: "interrupted" };
 const fmtTime = (t) => new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
@@ -55,9 +57,9 @@ async function refreshWorks() {
   for (const j of shown) {
     const tiles = j.tiles.length > 3 ? `${j.tiles.slice(0, 3).join(", ")} +${j.tiles.length - 3}` : j.tiles.join(", ");
     const card = el("div", { class: "jobcard" + (j.id === selectedJob ? " on" : ""), onclick: () => openJob(j.id) },
-      el("div", { class: "row between" }, el("b", { class: "mono" }, tiles),
+      el("div", { class: "row between" }, el("b", { class: "mono" }, tiles || "country-wide file"),
         el("span", { class: `jbadge ${j.status}` }, STATUS_TXT[j.status] || j.status)),
-      el("div", { class: "hint" }, `${j.profile} · ${j.region} · ${fmtTime(j.created)} · ${j.tiles.length} tile(s)`),
+      el("div", { class: "hint" }, `${KIND_TXT[j.kind] || j.profile} · ${j.region} · ${fmtTime(j.created)} · ${j.tiles.length} tile(s)`),
       el("div", { class: "mini" }, el("div", { style: `width:${Math.round(j.progress * 100)}%` })));
     list.append(card);
   }
@@ -102,8 +104,8 @@ async function renderJob(j) {
   box.innerHTML = "";
   if (!j) { box.append(el("p", { class: "hint" }, "This job no longer exists.")); return; }
   const head = el("div", { class: "jobhead" },
-    el("h2", {}, `Job ${j.id}`), el("span", { class: `jbadge ${j.status}` }, STATUS_TXT[j.status] || j.status),
-    el("span", { class: "hint" }, `${j.profile} · ${j.region} · ${j.workers} at a time`));
+    el("h2", {}, `${KIND_TXT[j.kind] ? KIND_TXT[j.kind] + " · " : ""}Job ${j.id}`), el("span", { class: `jbadge ${j.status}` }, STATUS_TXT[j.status] || j.status),
+    el("span", { class: "hint" }, KIND_TXT[j.kind] ? j.region : `${j.profile} · ${j.region} · ${j.workers} at a time`));
   const del = el("button", { class: "ghost danger", title: "Delete this job's record and log" }, "Delete job");
   del.onclick = async () => {
     if (!confirm("Delete this job's record and log? Built tiles are not affected.")) return;
@@ -117,7 +119,7 @@ async function renderJob(j) {
   box.append(el("div", { class: "row between" }, head, j.status === "running" ? "" : del));
   box.append(el("div", { class: "row" }, el("span", {}, el("u", {}, "Progress"), ` ${Math.round(j.progress * 100)}%`),
     el("span", {}, el("u", {}, "Elapsed"), ` ${fmtDur(j.elapsed)}`),
-    el("span", {}, `Built ${j.built} · Failed ${j.failed} · ${j.tiles.length} tile(s)`)));
+    el("span", {}, `${KIND_TXT[j.kind] ? "Done" : "Built"} ${j.built} · Failed ${j.failed} · ${j.tiles.length} tile(s)`)));
   box.append(el("div", { class: "jprogress" }, el("div", { style: `width:${Math.round(j.progress * 100)}%` })));
 
   const grid = el("div", { class: "tilegrid" });
@@ -170,6 +172,119 @@ async function renderJob(j) {
   }
   box.append(el("div", { class: "report" }, el("div", {}, el("h3", {}, "Final report"), left),
     el("div", {}, el("h3", {}, "Steps"), steps), errBox));
+}
+
+/* ---------------- Data (downloaded source data) ---------------- */
+const fmtDay = (t) => t ? new Date(t * 1000).toLocaleDateString([], { dateStyle: "medium" }) : "–";
+const fmtWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "–";
+let dataChecked = new Set();
+
+async function startDataJob(kind, tiles, force) {
+  const r = await api().start_data_job(kind, tiles || [], $("#region").value || "colombia", !!force);
+  if (!r.ok) { msg("#dataMsg2", r.error, true); return r; }
+  window._buildTotal = Math.max(1, r.tiles);
+  if (typeof setRunning === "function") setRunning(true);
+  if (typeof poll === "function") poll();
+  msg("#dataMsg2", "Started. Progress and log are in the Build queue.");
+  refreshData();
+  waitForDataJob();
+  return r;
+}
+
+async function waitForDataJob() {   // refresh this page when the download finishes
+  const j = await api().job_status(1e12);
+  if (j.running) { setTimeout(waitForDataJob, 2000); return; }
+  if (currentView === "data") refreshData();
+  if (typeof refreshStatus === "function") refreshStatus();
+}
+
+async function refreshData() {
+  const d = await api().data_status($("#region").value || "colombia");
+  const busyNow = d.busy;
+  // OpenStreetMap card
+  const o = d.osm, oc = $("#dcOsm"); oc.innerHTML = "";
+  oc.append(el("h3", {}, "OpenStreetMap (Geofabrik country file)"));
+  oc.append(el("p", { class: "hint" }, "Roads, buildings, water, airports, parks, single trees and plantations. "
+    + "Read once for all tiles of a build."));
+  if (o.exists) {
+    oc.append(el("div", {}, `${fmtMB(o.mb)} · ${o.remote_date ? `map data from ${fmtWhen(o.remote_date)} · ` : ""}downloaded ${fmtWhen(o.downloaded)}`));
+    const chk = el("button", { class: "ghost" }, "Check for update");
+    const upd = el("button", { class: "primary hidden" }, "Update OSM data");
+    const res = el("div", { class: "hint" });
+    chk.disabled = upd.disabled = busyNow;
+    chk.onclick = () => busy(chk, "Checking…", async () => {
+      const r = await api().check_osm_update($("#region").value || "colombia");
+      if (!r.ok) { res.className = "hint err"; res.textContent = r.error; return; }
+      res.className = "hint";
+      if (r.newer) {
+        res.textContent = `A newer file is available: map data from ${fmtWhen(r.remote_date)}${r.remote_size ? ` (${fmtMB(r.remote_size / 1e6)})` : ""}.`;
+        upd.classList.remove("hidden");
+      } else res.textContent = "You have the newest file.";
+    });
+    upd.onclick = () => {
+      const n = d.tiles.filter(t => t.osm).length;
+      if (!confirm(`Download the newer OpenStreetMap file and re-read it for ${n} tile(s)?\n\n`
+        + "This takes a few minutes. Built tiles then show as outdated until you rebuild them "
+        + "(Build → Select outdated).")) return;
+      busy(upd, "Starting…", () => startDataJob("osm"));
+    };
+    oc.append(el("div", { class: "row" }, chk, upd), res);
+  } else {
+    oc.append(el("div", { class: "hint err" }, "Not downloaded yet (about 335 MB). It's downloaded automatically on the first build."));
+    const dl = el("button", { class: "primary" }, "Download now");
+    dl.disabled = busyNow;
+    dl.onclick = () => busy(dl, "Starting…", () => startDataJob("osm"));
+    oc.append(el("div", { class: "row" }, dl));
+  }
+  // Ecoregions card
+  const e = d.ecoregions, ec = $("#dcEco"); ec.innerHTML = "";
+  ec.append(el("h3", {}, "Ecoregions (biomes)"));
+  ec.append(el("p", { class: "hint" }, "RESOLVE Ecoregions 2017: decides which forest type (rainforest, montane, dry forest…) grows where."));
+  if (e.exists || e.ready) {
+    ec.append(el("div", {}, e.exists ? `${fmtMB(e.mb)} · downloaded ${fmtDay(e.downloaded)}${e.ready ? "" : " · the Colombia cut-out is made on the next build"}`
+      : "Colombia cut-out ready"));
+  } else {
+    ec.append(el("div", { class: "hint err" }, "Not downloaded yet (about 150 MB). It's downloaded automatically on the first build."));
+    const dl = el("button", { class: "primary" }, "Download now");
+    dl.disabled = busyNow;
+    dl.onclick = () => busy(dl, "Starting…", () => startDataJob("ecoregions"));
+    ec.append(el("div", { class: "row" }, dl));
+  }
+  // Tiles table
+  const names = new Set(d.tiles.map(t => t.tile));
+  dataChecked = new Set([...dataChecked].filter(n => names.has(n)));
+  $("#dataCount").textContent = `(${d.tiles.length} · ${fmtMB(d.tiles.reduce((a, t) => a + t.mb, 0))})`;
+  const nSel = (typeof selected !== "undefined") ? selected.size : 0;
+  $("#dataFetchSel").textContent = `Download for map selection (${nSel})`;
+  $("#dataFetchSel").disabled = busyNow || !nSel;
+  const box = $("#dataTiles"); box.innerHTML = "";
+  if (!d.tiles.length) {
+    box.append(el("p", { class: "hint" }, "No tile data yet. Select tiles on the Build map and build them, or use Download for map selection."));
+    updateDataButtons(); return;
+  }
+  const all = el("input", { type: "checkbox", title: "Check all" });
+  all.checked = dataChecked.size === d.tiles.length;
+  all.onchange = () => { dataChecked = all.checked ? new Set(names) : new Set(); refreshData(); };
+  const tbl = el("table", { class: "datatable" },
+    el("tr", {}, el("th", {}, all), ...["Tile", "Satellite", "OpenStreetMap", "Elevation", "Size", "Built"].map(h => el("th", {}, h))));
+  const yes = (v) => el("span", { class: v ? "ok" : "bad" }, v ? "✓" : "✗");
+  for (const t of d.tiles) {
+    const cb = el("input", { type: "checkbox" });
+    cb.checked = dataChecked.has(t.tile);
+    cb.onchange = () => { cb.checked ? dataChecked.add(t.tile) : dataChecked.delete(t.tile); updateDataButtons(); };
+    const osmCell = t.osm ? el("span", { class: t.osm_stale ? "warn" : "" }, fmtDay(t.osm_date),
+      t.osm_stale ? " · older than the country file" : "") : yes(false);
+    tbl.append(el("tr", {}, el("td", {}, cb), el("td", { class: "mono" }, t.tile), el("td", {}, yes(t.satellite)),
+      el("td", {}, osmCell), el("td", {}, yes(t.elevation)), el("td", {}, fmtMB(t.mb)), el("td", {}, t.built ? "yes" : "–")));
+  }
+  box.append(tbl);
+  updateDataButtons();
+}
+
+function updateDataButtons() {
+  $("#dataSelMap").disabled = !dataChecked.size;
+  $("#dataDelete").disabled = !dataChecked.size;
+  $("#dataDelete").textContent = dataChecked.size ? `Delete data of ${dataChecked.size} tile(s)…` : "Delete checked data…";
 }
 
 /* ---------------- busy buttons (spinner while an action runs) ---------------- */
@@ -296,8 +411,23 @@ async function applyDataFolder() {
   $("#dataRestart").classList.remove("hidden");
 }
 
+async function loadCredits() {
+  const box = $("#aboutCredits");
+  if (box.children.length) return;
+  const c = await api().credits();
+  const table = (rows, withUse) => {
+    const t = el("table", { class: "datatable credits" });
+    for (const r of rows) t.append(el("tr", {},
+      el("td", {}, el("b", {}, r.name), withUse && r.use ? el("div", { class: "hint" }, r.use) : ""),
+      el("td", {}, r.attribution, el("div", { class: "hint" }, `${r.license} · ${r.url}`))));
+    return t;
+  };
+  box.append(el("h4", {}, "Data"), table(c.data, true), el("h4", {}, "Software"), table(c.software, false));
+}
+
 async function loadAppSettings() {
   loadDataFolder();
+  loadCredits();
   const s = await api().get_app_settings();
   $("#setXp").value = s.xplane_root;
   renderChecks($("#setXpCheck"), s.xplane_check, "X-Plane 12 found (Custom Scenery, forest library and base mesh present)");
@@ -315,6 +445,26 @@ async function initViews() {
     await busy($("#jobsClear"), "", async () => { await api().clear_jobs(); selectedJob = null; await refreshWorks(); });
   };
   $("#diskRefresh").onclick = () => busy($("#diskRefresh"), "Refreshing…", refreshDisk);
+  $("#dataRefresh").onclick = () => busy($("#dataRefresh"), "Refreshing…", refreshData);
+  $("#dataFetchSel").onclick = () => {
+    const tiles = [...selected].sort();
+    if (!confirm(`Download data for ${tiles.length} tile(s) without building them?`)) return;
+    busy($("#dataFetchSel"), "Starting…", () => startDataJob("tiles", tiles));
+  };
+  $("#dataSelMap").onclick = () => {
+    for (const n of dataChecked) selected.add(n);
+    renderSelection(); drawTiles(); showView("build");
+  };
+  $("#dataDelete").onclick = async () => {
+    const tiles = [...dataChecked].sort();
+    if (!confirm(`Delete the downloaded data of ${tiles.length} tile(s)?\n\nBuilt tiles stay in X-Plane. `
+      + "The data is downloaded again automatically if you rebuild them.")) return;
+    await busy($("#dataDelete"), "Deleting…", async () => {
+      const r = await api().delete_tiles(tiles, ["cache"], $("#region").value || "colombia", "");
+      msg("#dataMsg2", r.ok === false ? r.error : `Deleted data of ${tiles.length} tile(s).`, r.ok === false);
+      dataChecked.clear(); await refreshData(); refreshStatus(); refreshStatusbarDisk();
+    });
+  };
   $("#setXp").oninput = liveCheck;
   $("#dataFolder").oninput = checkDataFolder;
   $("#dataPick").onclick = async () => { const p = await api().pick_path("folder");

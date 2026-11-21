@@ -131,11 +131,9 @@ def _links_into(out_dir: Path) -> list[Path]:
 
 def repoint_links(links: list[Path], new_out: Path) -> list[str]:
     """Point each forest_* junction at new_out/<its name>. Only our own forest_* links."""
-    notes = []
-    if os.name != "nt":
-        return notes
-    import _winapi
+    from forest import pack
 
+    notes = []
     for link in links:
         if not link.name.startswith("forest_"):
             continue
@@ -144,8 +142,8 @@ def repoint_links(links: list[Path], new_out: Path) -> list[str]:
             notes.append(f"{link.name}: nothing to link in the new folder; left as it was")
             continue
         try:
-            os.rmdir(link)                       # removes only the junction
-            _winapi.CreateJunction(str(target), str(link))
+            pack.remove_link(link)
+            pack.make_link(target, link)
             notes.append(f"X-Plane link {link.name} now points to {target}")
         except OSError as exc:
             notes.append(f"could not re-point {link.name}: {exc} (use Install pack again)")

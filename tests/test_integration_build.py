@@ -135,7 +135,7 @@ def test_build_refuses_seasonal_assets(sandbox, monkeypatch, real_rules):
 @pytest.mark.dsftool
 def test_compile_with_real_dsftool(built_tile, sandbox):
     from forest import cli, config
-    real = ROOT / "tools" / "xptools" / "windows" / "DSFTool.exe"
+    real = ROOT / "tools" / "xptools" / config.PLATFORM_DIR / config.DSFTOOL_EXE   # this system's bundled one
     if not real.exists():
         pytest.skip("bundled DSFTool not available on this platform")
     config.save(sandbox.xplane, real)
@@ -144,3 +144,24 @@ def test_compile_with_real_dsftool(built_tile, sandbox):
     assert cli.compile_dsf(built_tile, dsf) == 0
     assert dsf.exists() and dsf.stat().st_size > 1000
     assert not dsf.with_name(dsf.stem + ".building.dsf").exists()   # temp file swapped in
+
+
+@pytest.mark.integration
+def test_outdated_detection(built_tile, sandbox):
+    import os
+
+    from forest.build import outdated_reasons
+    from forest.paths import studio_path
+    stats = json.loads(studio_path("colombia", TILE, ".stats.json").read_text())
+    assert stats["fingerprint"] and "osm.json" in stats["data"]
+    assert outdated_reasons(stats, TILE, "test", "colombia") == []               # just built
+    assert "built with profile 'test'" in outdated_reasons(stats, TILE, "medium", "colombia")[0]
+    prof = sandbox.root / "config" / "profiles" / "test.toml"
+    prof.write_text(prof.read_text().replace("global_density = ", "global_density = 0.5 #"))
+    assert outdated_reasons(stats, TILE, "test", "colombia") == ["profile or forest types changed"]
+    osm = TILE.cache_path / "osm.json"
+    t = stats["data"]["osm.json"] + 3600
+    os.utime(osm, (t, t))                                                          # re-extracted later
+    assert "newer data: osm.json" in outdated_reasons(stats, TILE, "test", "colombia")
+    old = {k: v for k, v in stats.items() if k != "fingerprint"}
+    assert outdated_reasons(old, TILE, "test", "colombia") == ["built before ForestStudio tracked settings"]

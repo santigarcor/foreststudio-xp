@@ -49,9 +49,16 @@ python -m venv .venv
 ```
 
 - Python 3.11+ (this PC: 3.15; all deps have 3.15 wheels). Windows is the target platform.
-- **DSFTool is bundled** for Windows: `tools/xptools/windows/DSFTool.exe` (XPTools 24-5,
-  DSFTool 2.4.0-b1, Laminar Research, **MIT/X11** — see `tools/xptools/NOTICE.md`). macOS/Linux
-  builds are to be added under `tools/xptools/macos|linux/` (the app picks the folder for its platform).
+- **DSFTool is bundled** for all three systems (XPTools 24-5, DSFTool 2.4.0-b1, Laminar Research,
+  **MIT/X11** — see `tools/xptools/NOTICE.md`): `tools/xptools/windows/DSFTool.exe`,
+  `macos/DSFTool` (universal x86-64 + arm64), `linux/DSFTool` (x86-64). `config.PLATFORM_DIR` picks
+  one; git keeps them executable (100755) and `config._ensure_executable` re-adds +x if a zip lost it.
+  No DSFTool setting in the UI (a hand-set `[tools] dsftool` in local.toml still wins if it exists).
+- macOS/Linux: the pack link is a **symlink** (`pack.make_link` / `remove_link`; junction on
+  Windows); X-Plane detection also looks in `~/.local/share/Steam`, `/Applications/X-Plane 12`.
+  Not tested on real Macs/Linux yet, only in CI.
+- User README: `README.md` (install, first run, scenery order, views, credits). Keep it in sync with
+  user-visible changes; `CLAUDE.md` is the technical summary.
 - X-Plane location: **Settings** view (or auto-detected: `%LOCALAPPDATA%\x-plane_install_12.txt`,
   Steam `libraryfolders.vdf`, common folders). Saved in `~/.foreststudio/config/local.toml`.
 - First run without a valid X-Plane folder opens the Settings view automatically.
@@ -87,7 +94,9 @@ CLI (used by the app's job runner; handy for debugging):
 | Command | What it does |
 |---|---|
 | `forest catalog` | (Re)build `~/.foreststudio/config/catalog_xp12.json` from X-Plane's `1200 forests` library |
-| `forest fetch --tiles +06-076,+06-075` | Satellite rasters per tile (4 downloads at a time) + OSM in **one** pass |
+| `forest fetch --tiles +06-076,+06-075` | Satellite rasters per tile (4 downloads at a time) + OSM in **one** pass; downloads the OSM country file / ecoregions zip first if missing |
+| `forest data osm [--update] [--force]` | Download / update the Geofabrik country file (only if the server's is newer), then re-extract every tile that has `osm.json` |
+| `forest data ecoregions [--update]` | Download the RESOLVE zip and make the Colombia cut-out |
 | `forest build --tile +06-076 --profile medium --region colombia --compile [--keep-text] [--install]` | Build one tile; `--install` ensures the pack link exists |
 | `forest decode <file.dsf> [--label x]` | DSF → text into `<data>/cache/decoded/` (debug) |
 | `forest poc …` | Phase-0 proof of concept (three test squares near SKRG) |
@@ -101,11 +110,15 @@ CLI (used by the app's job runner; handy for debugging):
 forest/
   config.py        data-folder paths, local.toml load/save, X-Plane & DSFTool auto-detect + validation
   migrate.py       one-time move of old in-repo data to ~/.foreststudio (+ junction re-point)
+  datafolder.py    Settings → Data folder: check / move / switch, re-point links, location.toml
+  credits.py       data + software credits (Settings → About) and the pack's CREDITS.txt
   tiles.py         Tile (1°×1°, name "+06-076", 10° folder "+00-080"), Grid (north-up raster)
                    Tile.cache creates the folder (write); Tile.cache_path never does (read/check)
   paths.py         <data>/out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
                    out/studio_<region>/<tile>.{txt,stats.json,overlay.png,preview.png}
   fetch/
+    sources.py     country-wide files: Geofabrik .pbf + RESOLVE zip — download (.part → rename,
+                   `<file>.json` meta: server date/size/downloaded), status, check_update (HEAD)
     rasters.py     ESA WorldCover 2021 (COG windows), Hansen GFC v1.12 treecover2000 + lossyear
     osm_pbf.py     ONE pass over the Geofabrik .pbf → streams elements into every requested tile's
                    osm.json (format VERSION 3; old versions re-extracted automatically)
@@ -162,15 +175,21 @@ tests/                              pytest suite (sandboxed)
 6. **Write** DSF text (tile-wide `sim/exclude_for` so our forests replace everything below),
    overlay/preview PNGs, stats JSON → **compile** with DSFTool to `<tile>.building.dsf` then atomic
    swap into the pack (X-Plane never sees a half-written tile); text deleted unless `--keep-text`.
+7. **Outdated detection**: stats JSON records `profile`, `region`, `fingerprint` (sha256 of profile +
+   rules + `build.BUILD_VERSION`) and `data` (mtimes of worldcover/treecover/lossyear/osm.json).
+   `build.outdated_reasons()` compares with the current profile/rules/data; `tile_status(..., profile)`
+   returns `outdated` reasons → dashed outline on the map, **Select outdated**, Tile info "Up to date".
+   Tiles built before fingerprints count as outdated. **Bump `BUILD_VERSION`** when a code change
+   alters results so every older tile shows up.
 
 ### Install model
 
 - The region pack `~/.foreststudio/out/forest_<region>` is linked into X-Plane as **one directory junction**
-  `Custom Scenery/forest_<region>` (like OrthoStudio). No admin rights needed. Every built tile is
+  `Custom Scenery/forest_<region>` (like OrthoStudio; a symlink on macOS/Linux). No admin rights needed. Every built tile is
   in X-Plane immediately; uninstall removes only the junction. File symlinks are not possible on
   this PC (need Developer Mode/admin); hard links were used briefly and replaced by the junction.
 - An existing *real* pack folder is absorbed: tiles only in X-Plane move into the project,
-  duplicates are removed, anything that isn't a `.dsf` makes it refuse.
+  duplicates are removed, anything that isn't a `.dsf` (or our `CREDITS.txt`) makes it refuse.
 - **Scenery order** (owner's ini): `forest_colombia` sits **below** hand-made airport/city packs
   (they have their own trees our exclusion would delete) and **above** simHeaven
   `X-World_America-4-extras` and `7-forests`, so on built tiles our tile-wide exclusion hides
@@ -188,12 +207,18 @@ with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by
 `JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
 Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
 
+Download jobs use the same runner and queue (`Api.start_data_job`): kind `data` (fetch for tiles
+selected on the map, or the ecoregions zip) and `osm_update` (`forest data osm --update`, then
+re-extract every tile with `osm.json`). Their records have `kind` and `step_names = ["data"]`;
+old records without them load as builds. Only one job (build or download) runs at a time.
+
 ---
 
 ## The app (views)
 
 - **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid; tile status colours (ortho,
-  cached, built, installed, selected); click/shift-click selection; forest overlay (colour = biome
+  cached, built, installed, selected; **outdated** = dashed); click/shift-click selection
+  (no "select all": the owner selects by hand); **Select outdated**; forest overlay (colour = biome
   or plantation, brightness = density, red = cut out, yellow = OSM trees) with legend; sidebar tabs:
   - **Tiles**: selection, **X-Plane pack** (Install/Uninstall pack, ini warnings), Build with
     "Builds at the same time: Auto (N)/1…max", time & disk **estimate** (from `history.jsonl`
@@ -205,19 +230,28 @@ Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
     elevation bands with dense/sparse type pickers sorted lightest first with FPS cost).
   - (No log tab: the Tiles tab shows progress + "Open in Build queue"; the live log is in the Build queue.)
 - **Build queue** (internal id `works`; the open log keeps updating without closing): saved jobs (search by tile), progress, per-tile step bars, log, final report,
-  per-step table, errors; delete job / clear all.
+  per-step table, errors; delete job / clear all. Download jobs show as "Download data" /
+  "Update OSM data".
+- **Data**: cards for the OSM country file (size, map-data date, downloaded date; Download /
+  Check for update → Update OSM data), ecoregions (Download), satellite (fixed releases, nothing to
+  update); table of tiles with data (satellite / OSM date, flagged when older than the country file /
+  elevation / size / built) with Download for map selection, Select checked on map, Delete checked data.
 - **Disk space**: usage by category (tile data, OSM country file, ecoregions, built pack, app
   files, job logs, leftovers), largest tiles, clean-ups (leftovers, data of unbuilt tiles, job history).
 - **Settings**: X-Plane 12 folder (Browse / Detect / live validation / Save); **Data folder** (Browse /
   Use default / live check / Move data here → Restart now). **No DSFTool setting**: the bundled one is used (`config.BUNDLED_DSFTOOL`); a hand-set `[tools] dsftool` in local.toml still overrides it if that file exists. Plus
-  setup checks. Status bar: X-Plane path, checks (n/5), data kept, running job.
+  setup checks, **About** (credits from `forest/credits.py`). Status bar: X-Plane path, checks (n/5),
+  data kept, running job.
 - Header logo + favicon: `forest/app/ui/icon.svg` (copy of `forest/app/icons/foreststudio-xp.svg`; keep in sync).
 - UI convention: any button that calls a slow API goes through `busy(btn, "Working…", fn)` in
   `views.js` (spinner + disabled while it runs).
 
 ---
 
-## Data sources (all free; personal use, attributions)
+## Data sources (all free; attribution required — see `forest/credits.py`, README, pack CREDITS.txt)
+
+The OSM country file and the ecoregions zip are downloaded automatically on the first fetch/build
+(`cli._ensure_country_files`) or from the Data view; per-tile rasters on every fetch.
 
 | Data | Source | Notes |
 |---|---|---|
@@ -288,16 +322,21 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
   plantation matching, biomes, exclusions & coverage, settings validation/round-trips, catalog
   parsing (synthetic library + .for), **one-pass OSM extraction (real pyosmium on a tiny .osm)**,
   jobs lifecycle, config detection/save, resources/history, hidden processes, disk usage and safe
-  deletion, pack junction link/unlink/absorb (Windows).
+  deletion, pack link/unlink/absorb (junction or symlink), data-folder move/switch, migration,
+  country-file download (local HTTP server) / update check, download jobs, outdated detection,
+  pack credits.
 - Integration (`-m integration`): the real pipeline on a synthetic tile (WorldCover/Hansen
   GeoTIFFs, OSM, ecoregions, elevation) → stats, biomes, plantations, overlay, ≤255 windings; refuses
   seasonal assets; compiles with the bundled DSFTool (`-m dsftool`).
+- **CI**: `.github/workflows/tests.yml` runs the suite on Windows (Python 3.11, 3.13), Ubuntu and
+  macOS (3.12) on every push/PR — the only place the Linux/macOS DSFTool and symlinks get exercised.
 - UI check: `.claude/launch.json` → `forest-ui-dev` (dev server on :8765); the real window was
   smoke-tested with pywebview `evaluate_js`.
 
 ## Conventions
 
-- Keep the X-Plane pack folder clean (only `.dsf`); app files go to `<data>/out/studio_<region>/`.
+- Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
+  require; written on every compile and on Install pack); app files go to `<data>/out/studio_<region>/`.
 - New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION`
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
@@ -306,8 +345,9 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 ## Parked ideas / not done yet
 
-- "Select all Colombia" button, "select outdated tiles" (settings hash per build), resume.
-- Update-OSM button (Geofabrik refresh), README for users, macOS/Linux DSFTool bundles.
-- Tree height (ETH 10 m height classes), scrubland on open ground (Caribbean), sharper edges from
-  ortho imagery, town trees where OSM has none, FPS benchmark vs X-World.
+- Resume an interrupted/cancelled job; packaged Windows release (PyInstaller zip / installer).
+- Later, when the owner asks: scrubland on open ground (Caribbean), town trees where OSM has none,
+  FPS benchmark vs X-World, sharper edges from ortho imagery.
 - Other regions (Phase 4) — only when asked.
+- **Not wanted** (owner, 2026-11-21): a "select all Colombia" button (tiles are selected by hand);
+  tree height (too much work for the gain).

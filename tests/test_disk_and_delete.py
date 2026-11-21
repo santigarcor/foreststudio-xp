@@ -61,11 +61,8 @@ def test_api_delete_tiles(sandbox):
     assert not api.delete_tiles(["nonsense"], ["output"], "colombia")["ok"]
 
 
-@pytest.mark.windows
 def test_pack_link_unlink_and_absorb(sandbox, monkeypatch):
-    import sys
-    if sys.platform != "win32":
-        pytest.skip("directory junctions are Windows-only")
+    """Junction on Windows, symlink on macOS/Linux."""
     from forest import pack
     tile = sandbox.out / "forest_colombia" / "Earth nav data" / "+00-080" / "+06-076.dsf"
     tile.parent.mkdir(parents=True)
@@ -85,11 +82,7 @@ def test_pack_link_unlink_and_absorb(sandbox, monkeypatch):
     assert r["ok"] and not link.exists() and tile.exists()     # only the link is removed
 
 
-@pytest.mark.windows
 def test_pack_refuses_folder_with_other_files(sandbox):
-    import sys
-    if sys.platform != "win32":
-        pytest.skip("directory junctions are Windows-only")
     from forest import pack
     old = sandbox.xplane / "Custom Scenery" / "forest_colombia"
     old.mkdir(parents=True)
@@ -98,3 +91,11 @@ def test_pack_refuses_folder_with_other_files(sandbox):
         pack.link_pack("colombia")
     assert (old / "readme.txt").exists()
     assert not pack.unlink_pack("colombia")["ok"]   # a real folder is never removed
+
+
+def test_pack_credits_file(sandbox):
+    from forest.credits import CREDITS_FILE, credits_text, write_pack_credits
+    p = write_pack_credits(sandbox.out / "forest_colombia", "colombia")
+    text = p.read_text(encoding="utf-8-sig")
+    assert p.name == CREDITS_FILE and "© OpenStreetMap contributors" in text and "ODbL" in text
+    assert "CC BY 4.0" in text and text == credits_text("colombia")
