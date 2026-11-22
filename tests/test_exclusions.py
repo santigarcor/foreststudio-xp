@@ -2,9 +2,7 @@
 
 import math
 
-import numpy as np
-
-from forest.exclusions import (coverage_mask, exclusion_mask, osm_geometries, osm_tree_hints)
+from forest.exclusions import coverage_mask, exclusion_mask, osm_geometries, osm_tree_hints
 from forest.tiles import Grid, Tile
 from tests.conftest import write_json
 
@@ -95,3 +93,59 @@ def test_tree_hints(tmp_path):
     assert len(h["green"]) == 2               # golf course + forest
     assert len(h["plantations"]) == 2         # orchard + needleleaved forest
     assert h["plantations"][0][1]["trees"] == "oil_palms"
+
+
+def _old_style_cover(geoms, grid, min_cover):
+    """The previous implementation: rasterio converts shapely objects, float mean per cell."""
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+    s = 2
+    h, w = grid.shape
+    hi = rasterize(((g, 1) for g in geoms), out_shape=(h * s, w * s),
+                   transform=grid.transform @ Affine.scale(1 / s), dtype="uint8")
+    return hi.reshape(h, s, w, s).mean(axis=(1, 3)) >= min_cover
+
+
+def test_fast_coverage_matches_the_old_method(monkeypatch):
+    # Batched dict rasterising + integer counts must clear exactly the same cells.
+    import random
+
+    from shapely.geometry import LineString, MultiPolygon, Polygon
+
+    import forest.exclusions as ex
+
+    monkeypatch.setattr(ex, "_RASTERIZE_BATCH", 7)      # force several batches
+    monkeypatch.setattr(ex, "_GEOJSON_BATCH", 5)
+    grid = Grid(Tile(6, -76), 400)
+    rnd = random.Random(1)
+    geoms = []
+    for _ in range(60):
+        x, y = -76 + rnd.random() * 0.9, 6 + rnd.random() * 0.9
+        geoms.append(LineString([(x, y), (x + rnd.random() * 0.05, y + rnd.random() * 0.05)]).buffer(0.002, cap_style="flat"))
+        outer = sq(x, y, 0.01)
+        geoms.append(Polygon(outer, [sq(x + 0.003, y + 0.003, 0.003)[::-1]]))     # with a hole
+    geoms.append(MultiPolygon([Polygon(sq(-75.5, 6.5, 0.01)), Polygon(sq(-75.4, 6.4, 0.01))]))
+    for cover in (0.25, 0.5, 0.55, 1.0):
+        assert (coverage_mask(geoms, grid, cover) == _old_style_cover(geoms, grid, cover)).all()
+
+
+def test_batched_buffers_match_one_by_one():
+    from shapely.geometry import LineString, Polygon
+
+    from forest.exclusions import _ToBuffer
+
+    items = [(Polygon(sq(-75.5, 6.5, 0.001)), 0.0001, "round"), (LineString([(-75.5, 6.5), (-75.4, 6.6)]), 0.0002, "flat"),
+             (Polygon(sq(-75.3, 6.3, 0.002)), None, "round"), (LineString([(-75.2, 6.2), (-75.1, 6.25)]), 0.0003, "round")]
+    acc = _ToBuffer()
+    for g, d, cap in items:
+        acc.add(g, d, cap)
+    expected = [g if d is None else g.buffer(d, cap_style=cap) for g, d, cap in items]
+    assert all(a.equals_exact(b, 0) for a, b in zip(acc.result(), expected))   # same vertices, same order
+
+
+def test_cutouts_from_a_parsed_dict_match_the_file(tmp_path):
+    from forest.exclusions import load_osm
+    els = [way(1, {"highway": "primary"}, [(-75.6, 6.5), (-75.5, 6.5)]), way(2, {"building": "yes"}, sq(-75.55, 6.55, 0.0005))]
+    f = osm_file(tmp_path, els)
+    a, b = osm_geometries(f, LAT), osm_geometries(load_osm(f), LAT)
+    assert all(x.equals_exact(y, 0) for k in a for x, y in zip(a[k], b[k]))

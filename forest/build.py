@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 import rasterio
 import rasterio.errors
+import shapely
 
 # Preview/overlay PNGs are plain images (no map coordinates); that is intended.
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -29,10 +30,10 @@ from rasterio.windows import Window
 from shapely.geometry import Polygon, box, shape
 from shapely.geometry.polygon import orient
 
-from forest.assets.catalog import load_catalog
 from forest import config
-from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile
-from forest.exclusions import coverage_mask, exclusion_mask, osm_geometries, osm_tree_hints
+from forest.assets.catalog import load_catalog
+from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile, signed_area
+from forest.exclusions import coverage_mask, exclusion_mask, load_osm, osm_geometries, osm_tree_hints
 from forest.fetch.elevation import elevation_on_grid
 from forest.fetch.osm import fetch_osm
 from forest.fetch.rasters import WC_BARE, WC_BUILT, WC_MANGROVE, WC_SHRUB, WC_TREE, fetch_all, read_on_grid
@@ -55,6 +56,11 @@ class Settings:
             rules=fill_rule_defaults(_toml(config.rules_path(region)), region),
         )
 
+
+# WorldCover mangrove share that makes a cell "mangrove" (biome + kept in water). Not a profile
+# setting; a hand-set `mangrove_min_frac` in a profile still wins. Kept out of PROFILE_DEFAULTS
+# on purpose: that would change every tile's settings fingerprint and mark them all outdated.
+MANGROVE_MIN_FRAC = 0.3
 
 # Profile keys added after the first release: older profile files build as if they had these.
 PROFILE_DEFAULTS = {
@@ -87,11 +93,35 @@ def fill_rule_defaults(rules: dict, region: str) -> dict:
     return out
 
 
+def km2_per_deg2(lat: int) -> float:
+    """km² in one square degree at the middle of the tile whose south edge is `lat`."""
+    return (111.32 * math.cos(math.radians(lat + 0.5))) * 110.574
+
+
+def _pad3(pts: list) -> list:
+    """A winding needs 3 points: repeat the last one (duplicates just stack trees)."""
+    while len(pts) < 3:
+        pts.append(pts[-1])
+    return pts
+
+
 def _log(msg: str, t0: float) -> None:
     print(f"[{time.time() - t0:7.1f}s] {msg}", flush=True)
 
 
 def _class_share(cls: np.ndarray, src, grid: Grid, classes: tuple[int, ...]) -> np.ndarray:
+    """Share (0-1) of the source pixels in `classes` per grid cell."""
+    k = _block_factor(src, grid)
+    if k:
+        # The grid is the source pixel grid made k× coarser (WorldCover at 6000 cells: k = 2): the
+        # average of k×k pixels of 0/100 is 100·count/k², exact in uint8 for k = 1 or 2, so this
+        # gives the same values as GDAL's average resampling without a full reprojection.
+        h, w = grid.shape
+        hit = cls == classes[0]
+        for c in classes[1:]:
+            hit |= cls == c
+        count = hit.reshape(h, k, w, k).sum(axis=(1, 3), dtype=np.uint8)
+        return (count * np.uint8(100 // (k * k))).astype(np.float32) / 100.0
     from rasterio.warp import reproject
 
     hit = np.where(np.isin(cls, classes), 100, 0).astype(np.uint8)  # percent, 1 byte/px
@@ -101,16 +131,20 @@ def _class_share(cls: np.ndarray, src, grid: Grid, classes: tuple[int, ...]) -> 
     return out.astype(np.float32) / 100.0
 
 
-def tree_fraction(worldcover: Path, grid: Grid, with_mangrove: bool = False):
-    """Share of 10 m WorldCover pixels that are trees (tree cover + mangroves) per grid cell.
-    With `with_mangrove`, also return the mangrove share on its own."""
-    with rasterio.open(worldcover) as src:
-        cls = src.read(1)
-        frac = _class_share(cls, src, grid, (WC_TREE, WC_MANGROVE))
-        if not with_mangrove:
-            return frac
-        mangrove = _class_share(cls, src, grid, (WC_MANGROVE,))
-    return frac, mangrove
+def _block_factor(src, grid: Grid) -> int | None:
+    """k when every grid cell is exactly k×k source pixels (k = 1 or 2), else None."""
+    t = src.transform
+    if not src.crs or src.crs.to_epsg() != 4326 or t.b or t.d or t.a <= 0 or t.e >= 0:
+        return None
+    k = round(grid.res / t.a)
+    tol = t.a * 1e-3   # a thousandth of a pixel
+    if k not in (1, 2) or abs(t.a * k - grid.res) > 1e-12 or abs(t.e + t.a) > 1e-12:
+        return None
+    if abs(t.c - grid.tile.lon) > tol or abs(t.f - (grid.tile.lat + 1)) > tol:
+        return None
+    if (src.height, src.width) != (grid.cells * k, grid.cells * k):
+        return None
+    return k
 
 
 def rule_biomes(rules: dict) -> list[dict]:
@@ -155,14 +189,18 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         built_frac = _class_share(wc, src, grid, (WC_BUILT,))
         del wc
     # Cells WorldCover calls mangrove get the mangrove biome and are not cut by water.
-    mangrove = mangrove_frac >= p.get("mangrove_min_frac", 0.3)
+    mangrove = mangrove_frac >= p.get("mangrove_min_frac", MANGROVE_MIN_FRAC)
     tc = read_on_grid(paths["treecover2000"], grid, Resampling.bilinear) / 100.0
     loss = read_on_grid(paths["lossyear"], grid, Resampling.nearest)
     _log(f"rasters on grid (mangrove cells: {int(mangrove.sum()):,})", t0)
 
     lat_mid = tile.lat + 0.5
-    osm_path = fetch_osm(tile)
-    geoms = osm_geometries(osm_path, lat_mid, p)
+    # osm.json is parsed once for cut-outs and tree hints, and freed before the heavy rasterising
+    # (a city tile's parsed JSON is over a GB of Python objects).
+    osm = load_osm(fetch_osm(tile))
+    geoms = osm_geometries(osm, lat_mid, p)
+    hints = osm_tree_hints(osm)
+    del osm
     min_cover = p.get("cutout_min_cover", 0.5)
     excl, excl_stats = exclusion_mask({k: v for k, v in geoms.items() if k != "water"}, grid, min_cover)
     water = coverage_mask(geoms["water"], grid, min_cover)
@@ -171,7 +209,6 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     excl_stats["water_kept_for_mangroves"] = int((water & mangrove).sum())
     _log(f"exclusions rasterised {excl_stats}", t0)
 
-    hints = osm_tree_hints(osm_path)
     green = coverage_mask(hints["green"], grid, 0.5)
     _log(f"OSM tree hints: {len(hints['green'])} green areas, {len(hints['points'])} single trees, "
          f"{len(hints['rows'])} tree rows", t0)
@@ -193,6 +230,8 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     density = np.clip(0.6 * frac + 0.4 * tc, 0.0, 1.0)
     if p.get("density_blur_cells"):
         density = gaussian_filter(density, sigma=p["density_blur_cells"])
+    # Full-tile arrays add up (a 6000² float64 is 288 MB): free each one once it's used.
+    del threshold, unsmoothed, frac, tc, loss
 
     # Biome per cell from the ecoregion map, then asset from that biome's elevation band
     # and dense/sparse.
@@ -221,9 +260,13 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
             sel = in_biome & (band_idx == i)
             asset_idx[sel & ~sparse] = assets.index(b["dense"])
             asset_idx[sel & sparse] = assets.index(b["sparse"])
+    del elev, sparse
 
     levels = p["density_levels"]
-    level_idx = np.digitize(density, [(a + b) / 2 for a, b in zip(levels, levels[1:])])
+    assert len(levels) <= 16, "density levels share the cell code with the asset (asset * 16 + level)"
+    # uint8 instead of digitize's int64 (values 0-15): 36 MB instead of 288 MB at 6000 cells.
+    level_idx = np.digitize(density, [(a + b) / 2 for a, b in zip(levels, levels[1:])]).astype(np.uint8)
+    del density
 
     # Plantations (OSM): replace the biome forest inside their outline, planted regardless of
     # the satellite tree share; rules with asset "" clear trees (sugar cane, pineapple, rice…).
@@ -272,14 +315,22 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                 if bm["scrub"] not in assets:
                     assets.append(bm["scrub"])
                 asset_idx[sel] = assets.index(bm["scrub"])
-            nearest = np.argmin(np.abs(sd[..., None] - np.asarray(levels, dtype=np.float32)), axis=-1)
-            level_idx = np.where(scrub, nearest, level_idx)
+            # Nearest density step, computed for scrub cells only (not a cells × levels array).
+            level_idx[scrub] = np.argmin(np.abs(sd[scrub][:, None] - np.asarray(levels, dtype=np.float32)), axis=-1)
+            del sd
             _log(f"scrub: {int(scrub.sum()):,} cells", t0)
+        del on_bare, scrub_share, osm_scrub, has_scrub
+    del shrub_frac, bare_frac
 
     # Town: built-up land (WorldCover) or OSM residential, not industrial/commercial, not forest.
     town = (built_frac >= p.get("town_min_built", 0.3)) | coverage_mask(hints["residential"], grid, 0.5)
     town &= ~coverage_mask(hints["no_town_trees"], grid, 0.5) & ~raw & ~planted & ~water & ~airport
-    code = np.where(trees | scrub, asset_idx * 16 + level_idx + 1, 0).astype(np.int32)
+    del built_frac
+    # Cell code = asset * 16 + density level + 1 (0 = no trees), built in int32 directly.
+    code = np.zeros(grid.shape, dtype=np.int32)
+    m = trees | scrub
+    code[m] = asset_idx[m].astype(np.int32) * 16 + level_idx[m] + 1
+    del m
 
     return {
         "grid": grid, "code": code, "assets": assets, "levels": levels,
@@ -357,9 +408,7 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
             groups.setdefault((int((lon - w0) / step), int((lat - s0) / step)), []).append((lon, lat))
             kept += 1
         for pts in groups.values():
-            while len(pts) < 3:  # a winding needs 3 points; duplicates just stack trees
-                pts.append(pts[-1])
-            polys.append(ForestPolygon(asset=asset, exterior=pts, density=1.0, fill=FILL_POINTS))
+            polys.append(ForestPolygon(asset=asset, exterior=_pad3(pts), density=1.0, fill=FILL_POINTS))
         _log(f"OSM single trees: {kept} placed in {len(groups)} groups", t0)
     if int(p.get("osm_tree_rows", 1)):
         n_rows = 0
@@ -394,7 +443,7 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
         return []
     grid: Grid = c["grid"]
     w0, s0, e0, n0 = grid.tile.bounds
-    cell_km2 = (111.32 * math.cos(math.radians(grid.tile.lat + 0.5))) * 110.574 / grid.cells ** 2
+    cell_km2 = km2_per_deg2(grid.tile.lat) / grid.cells ** 2
     seed = int(hashlib.sha256(grid.tile.name.encode()).hexdigest()[:8], 16)
     rng = np.random.default_rng(seed)
     rows, cols = np.nonzero(town)
@@ -432,9 +481,7 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     polys: list[ForestPolygon] = []
     for (asset, _, _), pts in groups.items():
         for i in range(0, len(pts), MAX_POINTS_PER_POLYGON):
-            part = pts[i:i + MAX_POINTS_PER_POLYGON]
-            while len(part) < 3:
-                part.append(part[-1])
+            part = _pad3(pts[i:i + MAX_POINTS_PER_POLYGON])
             polys.append(ForestPolygon(asset=asset, exterior=part, density=1.0, fill=FILL_POINTS,
                                        kind="town"))
     _log(f"town trees: {lon.size:,} in {int(town.sum()):,} town cells "
@@ -463,21 +510,34 @@ def vectorize(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
             if not sub.any():
                 continue
             tr = rasterio.windows.transform(win, grid.transform)
-            for geom, val in shapes(sub, mask=sub > 0, transform=tr, connectivity=4):
-                g = shape(geom).simplify(tol, preserve_topology=True).intersection(tile_box)
+            found = [(shape(geom), int(val)) for geom, val in shapes(sub, mask=sub > 0, transform=tr, connectivity=4)]
+            # One shapely call per chunk instead of one per shape (same GEOS operations).
+            geoms = shapely.simplify(np.array([g for g, _ in found], dtype=object), tol, preserve_topology=True)
+            # Clip only what crosses the tile edge. Clipping a polygon that lies inside keeps
+            # exactly its vertices but restarts its rings elsewhere (checked on +06-076); it
+            # cost ~7 s per city tile for nothing.
+            b = shapely.bounds(geoms)
+            cross = (b[:, 0] < w0) | (b[:, 1] < s0) | (b[:, 2] > e0) | (b[:, 3] > n0)
+            if cross.any():
+                geoms[cross] = shapely.intersection(geoms[cross], tile_box)
+            for g, (_, val) in zip(geoms, found):
                 for part in getattr(g, "geoms", [g]):
                     if part.geom_type != "Polygon" or part.area < min_area_deg2:
                         continue
-                    holes = [h for h in part.interiors
-                             if abs(_ring_area(list(h.coords))) >= min_area_deg2 / 4]
-                    piece = Polygon(part.exterior, holes)
-                    v = int(val) - 1
+                    piece = part
+                    rings = part.interiors
+                    if len(rings):
+                        areas = shapely.area(shapely.polygons(np.array(list(rings), dtype=object)))
+                        keep = areas >= min_area_deg2 / 4
+                        if not keep.all():
+                            piece = Polygon(part.exterior, [h for h, k in zip(rings, keep) if k])
+                    v = val - 1
                     for sub_poly in _split_for_dsf(piece):
                         sub_poly = orient(sub_poly, sign=1.0)
                         polys.append(ForestPolygon(
                             asset=c["assets"][v // 16],
-                            exterior=list(sub_poly.exterior.coords),
-                            holes=[list(h.coords) for h in sub_poly.interiors],
+                            exterior=shapely.get_coordinates(sub_poly.exterior).tolist(),
+                            holes=[shapely.get_coordinates(h).tolist() for h in sub_poly.interiors],
                             density=c["levels"][v % 16],  # 0-1 for now; scaled in budget()
                         ))
     _log(f"vectorised {len(polys)} polygons", t0)
@@ -509,25 +569,22 @@ def _split_for_dsf(poly, depth: int = 0) -> list:
     return out
 
 
-def _ring_area(ring) -> float:
-    a = 0.0
-    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
-        a += x1 * y2 - x2 * y1
-    return a / 2
-
-
 def budget(polys: list[ForestPolygon], tile: Tile, s: Settings) -> dict:
     """Scale densities to fit the tree budget; convert to DSF 0-255."""
     cat = {f["virtual"]: f for f in load_catalog()["forests"]}
+    missing = sorted({p.asset for p in polys} - cat.keys())
+    if missing:
+        raise ValueError(f"forest type(s) not in this X-Plane's forest library: {missing}. "
+                         "Pick another type in Forest types, or rebuild the catalog (Settings).")
     seasonal = [p.asset for p in polys if cat[p.asset]["seasons"]]
     if seasonal:
         raise ValueError(f"seasonal assets not allowed: {sorted(set(seasonal))}")
     lat_mid = tile.lat + 0.5
-    km2_per_deg2 = (111.32 * math.cos(math.radians(lat_mid))) * 110.574
+    deg2_km2 = km2_per_deg2(tile.lat)
 
     def area_km2(p: ForestPolygon) -> float:
-        a = abs(_ring_area(p.exterior)) - sum(abs(_ring_area(h)) for h in p.holes)
-        return max(a, 0.0) * km2_per_deg2
+        a = abs(signed_area(p.exterior)) - sum(abs(signed_area(h)) for h in p.holes)
+        return max(a, 0.0) * deg2_km2
 
     m_per_deg = 111_320.0 * math.cos(math.radians(lat_mid))
 
@@ -725,7 +782,7 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
     txt = ot.write_to(studio_path(region, tile, ".txt"))
     preview(c, studio_path(region, tile, ".preview.png"))
     overlay(c, studio_path(region, tile, ".overlay.png"), osm_polys=extra)
-    cell_km2 = (111.32 * math.cos(math.radians(tile.lat + 0.5))) * 110.574 / c["grid"].cells ** 2
+    cell_km2 = km2_per_deg2(tile.lat) / c["grid"].cells ** 2
     stats["biome_km2"] = {b["name"]: round(float((c["trees"] & (c["biome_idx"] == i)).sum()) * cell_km2, 1)
                           for i, b in enumerate(c["biomes"]) if (c["trees"] & (c["biome_idx"] == i)).any()}
     stats["scrub_km2"] = round(float(c["scrub"].sum()) * cell_km2, 1)

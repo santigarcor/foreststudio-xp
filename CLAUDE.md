@@ -45,7 +45,8 @@ python -m venv .venv
 # the desktop app (no console window)
 .venv\Scripts\foreststudio-xp.exe        # or double-click "ForestStudio XP.lnk" (per-machine shortcut)
 # tests
-.venv\Scripts\python -m pytest -q        # all (≈2 s);  -m "not integration" for the fast ones
+.venv\Scripts\python -m pytest -q        # all (≈8 s);  -m "not integration" for the fast ones
+.venv\Scripts\ruff check forest tests    # lint (also in CI)
 ```
 
 - Python 3.11+ (this PC: 3.15; all deps have 3.15 wheels). Windows is the target platform.
@@ -214,8 +215,9 @@ tests/                              pytest suite (sandboxed)
 ### Jobs / parallel builds
 
 App job = `fetch --tiles all` (satellite downloads ×4 in parallel, OSM one pass) then a pool of
-N `build` subprocesses (N = Auto from `resources.auto_workers()`, measured peak ≈ 4.6 GB RAM for
-Medellín, 2.8 GB San Andrés; this PC 8 cores / 33 GB → Auto 3). Logs tagged `[tile]`; a failed
+N `build` subprocesses (N = Auto from `resources.auto_workers()`, measured peak ≈ 3.8 GB RAM for
+Medellín, 2.2 GB San Andrés since 2026-11-21 (was 5.3 / 4.3 GB); this PC 8 cores / 33 GB → Auto 3,
+rising as new builds replace the old peaks in `history.jsonl`). Logs tagged `[tile]`; a failed
 tile doesn't stop others; cancel terminates all. Every job is saved in `<data>/cache/jobs/<id>.{json,log}`
 with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by parsing log lines in
 `JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
@@ -357,8 +359,11 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
   GeoTIFFs, OSM, ecoregions, elevation) → stats, biomes, plantations, overlay, ≤255 windings; refuses
   seasonal assets; compiles with the bundled DSFTool (`-m dsftool`).
 - **CI**: `.github/workflows/tests.yml` runs the suite on Windows (Python 3.11, 3.13), Ubuntu and
-  macOS (3.12) on every push/PR — the only place the Linux/macOS DSFTool and symlinks get exercised.
-- UI check: `.claude/launch.json` → `forest-ui-dev` (dev server on :8765); the real window was
+  macOS (3.12) on every push/PR — the only place the Linux/macOS DSFTool and symlinks get exercised —
+  plus `ruff check forest tests` once (config in `pyproject.toml`).
+- Performance changes must not change tiles: rebuild a tile before/after in a scratch data folder
+  (`FORESTSTUDIO_HOME`) and compare polygons (forest type, density, vertices), PNGs and stats.
+- UI check: `.claude/launch.json` → `forest-ui-dev` (dev server on :8765, or `PORT`); the real window was
   smoke-tested with pywebview `evaluate_js`.
 
 ## Conventions

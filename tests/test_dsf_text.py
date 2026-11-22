@@ -1,7 +1,15 @@
 import pytest
 
-from forest.dsf.text import (FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile, oriented,
-                             season_rasters, signed_area)
+from forest.dsf.text import (
+    FILL_LINE,
+    FILL_POINTS,
+    FILL_SOLID,
+    ForestPolygon,
+    OverlayTile,
+    oriented,
+    season_rasters,
+    signed_area,
+)
 
 SQUARE_CW = [(-75.5, 6.5), (-75.5, 6.6), (-75.4, 6.6), (-75.4, 6.5)]  # clockwise
 

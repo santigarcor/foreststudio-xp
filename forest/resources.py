@@ -32,7 +32,7 @@ def peak_gb() -> float:
     """Peak memory per build: 90th percentile of measured builds, else the default."""
     from forest import history
 
-    vals = sorted(e["peak_gb"] for e in history._events()
+    vals = sorted(e["peak_gb"] for e in history.events()
                   if e.get("kind") == "build" and isinstance(e.get("peak_gb"), (int, float)))
     if not vals:
         return DEFAULT_PEAK_GB

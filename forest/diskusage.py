@@ -57,17 +57,22 @@ def usage() -> dict:
     tile_dirs = [p for p in tiles_dir.iterdir() if p.is_dir()] if tiles_dir.exists() else []
     rasters = osm = elev = 0
     per_tile = []
+    tile_bytes: dict[Path, int] = {}   # each tile folder is walked once
     for d in tile_dirs:
         r = sum(_size(d / n) for n in ("worldcover.tif", "treecover2000.tif", "lossyear.tif"))
         o = _size(d / "osm.json")
         e = _size(d / "elevation_int16.npy")
         rasters, osm, elev = rasters + r, osm + o, elev + e
-        per_tile.append({"tile": d.name, "mb": _mb(_size(d))})
+        tile_bytes[d] = _size(d)
+        per_tile.append({"tile": d.name, "mb": _mb(tile_bytes[d])})
     per_tile.sort(key=lambda x: -x["mb"])
+    loose = sum(f.stat().st_size for f in tiles_dir.iterdir() if f.is_file()) if tiles_dir.exists() else 0
     left = _leftovers()
+    left_mb = _mb(sum(_size(p) for p in left))
     unbuilt = _unbuilt_tile_data()
+    unbuilt_mb = _mb(sum(tile_bytes[p] if p in tile_bytes else _size(p) for p in unbuilt))
     cats = [
-        {"key": "tile_data", "label": "Downloaded tile data", "mb": _mb(_size(tiles_dir)),
+        {"key": "tile_data", "label": "Downloaded tile data", "mb": _mb(sum(tile_bytes.values()) + loose),
          "detail": f"{len(tile_dirs)} tiles · satellite maps {_mb(rasters)} MB · OSM extracts {_mb(osm)} MB"
                    f" · elevation {_mb(elev)} MB",
          "path": str(tiles_dir)},
@@ -83,22 +88,22 @@ def usage() -> dict:
         {"key": "jobs", "label": "Job history and logs", "mb": _mb(_size(CACHE / "jobs")),
          "detail": f"{len(list((CACHE / 'jobs').glob('*.json')))} saved jobs" if (CACHE / "jobs").exists() else "none",
          "path": str(CACHE / "jobs")},
-        {"key": "leftovers", "label": "Leftovers (safe to delete)", "mb": _mb(sum(_size(p) for p in left)),
+        {"key": "leftovers", "label": "Leftovers (safe to delete)", "mb": left_mb,
          "detail": "debug decodes, abandoned downloads, kept DSF text, unfinished compiles",
          "path": str(CACHE)},
     ]
     total = sum(c["mb"] for c in cats if c["key"] != "leftovers") + next(c["mb"] for c in cats if c["key"] == "leftovers")
     try:
-        free = round(shutil.disk_usage(config.DATA_ROOT).free / 1e9, 1)
-        disk_total = round(shutil.disk_usage(config.DATA_ROOT).total / 1e9, 1)
+        du = shutil.disk_usage(config.DATA_ROOT)
+        free, disk_total = round(du.free / 1e9, 1), round(du.total / 1e9, 1)
     except OSError:
         free = disk_total = None
     return {
         "total_mb": round(total, 1), "categories": cats, "largest_tiles": per_tile[:15],
         "free_gb": free, "disk_total_gb": disk_total, "project": str(config.DATA_ROOT),
         "cleanable": {
-            "leftovers": {"items": len(left), "mb": _mb(sum(_size(p) for p in left))},
-            "unbuilt_tile_data": {"items": len(unbuilt), "mb": _mb(sum(_size(p) for p in unbuilt))},
+            "leftovers": {"items": len(left), "mb": left_mb},
+            "unbuilt_tile_data": {"items": len(unbuilt), "mb": unbuilt_mb},
         },
     }
 

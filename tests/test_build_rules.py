@@ -4,8 +4,15 @@ import numpy as np
 import pytest
 from shapely.geometry import Polygon, box
 
-from forest.build import (MAX_DSF_HOLES, _split_for_dsf, _tag_match, biome_raster, plantation_raster,
-                          plantation_rule, rule_biomes)
+from forest.build import (
+    MAX_DSF_HOLES,
+    _split_for_dsf,
+    _tag_match,
+    biome_raster,
+    plantation_raster,
+    plantation_rule,
+    rule_biomes,
+)
 from forest.tiles import Grid, Tile
 
 
@@ -106,3 +113,33 @@ def test_real_rules_only_use_evergreen_and_have_default(real_rules):
         assert elev == sorted(elev) and len(set(elev)) == len(elev)
     listed = [e for b in real_rules["biome"] for e in b["ecoregions"]]
     assert len(listed) == len(set(listed)), "an ecoregion is listed in two biomes"
+
+
+def test_worldcover_shares_fast_path_matches_reprojection(tmp_path):
+    # At 2 source pixels per grid cell the block count must equal GDAL's average resampling.
+    import rasterio
+    from rasterio.transform import from_origin
+
+    import forest.build as b
+
+    tile = Tile(6, -76)
+    rng = np.random.default_rng(3)
+    data = rng.choice(np.array([10, 20, 30, 50, 60, 95], dtype=np.uint8), size=(400, 400))
+    path = tmp_path / "wc.tif"
+    with rasterio.open(path, "w", driver="GTiff", width=400, height=400, count=1, dtype="uint8",
+                       crs="EPSG:4326", transform=from_origin(-76, 7, 1 / 400, 1 / 400)) as dst:
+        dst.write(data, 1)
+    grid = Grid(tile, 200)
+    with rasterio.open(path) as src:
+        cls = src.read(1)
+        assert b._block_factor(src, grid) == 2
+        for classes in ((10, 95), (95,), (20,), (60,), (50,)):
+            fast = b._class_share(cls, src, grid, classes)
+            from rasterio.enums import Resampling
+            from rasterio.warp import reproject
+            hit = np.where(np.isin(cls, classes), 100, 0).astype(np.uint8)
+            out = np.zeros(grid.shape, dtype=np.uint8)
+            reproject(hit, out, src_transform=src.transform, src_crs=src.crs, dst_transform=grid.transform,
+                      dst_crs="EPSG:4326", resampling=Resampling.average)
+            assert fast.dtype == np.float32 and (fast == out.astype(np.float32) / 100.0).all()
+        assert b._block_factor(src, Grid(tile, 150)) is None    # not a whole number of pixels: reproject

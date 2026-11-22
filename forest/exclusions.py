@@ -7,11 +7,13 @@ city that would clear almost every cell and remove real street trees and parks.)
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 from pathlib import Path
 
 import numpy as np
+import shapely
 from rasterio.features import rasterize
 from rasterio.transform import Affine
 from shapely.geometry import LineString, Polygon
@@ -60,18 +62,48 @@ def _relation_polys(el: dict) -> list[Polygon]:
     return polys
 
 
-def osm_geometries(osm_json: Path, lat_mid: float, profile: dict | None = None) -> dict[str, list]:
+def load_osm(osm_json: Path | dict) -> dict:
+    """The tile's osm.json (a city tile is hundreds of MB: parse it once and pass the dict on)."""
+    if isinstance(osm_json, dict):
+        return osm_json
+    return json.loads(Path(osm_json).read_text(encoding="utf-8"))
+
+
+class _ToBuffer:
+    """Geometries of one category, buffered in one shapely call per cap style instead of one
+    Python call each (~10 s for a city tile). Same GEOS operation and parameters, same order."""
+
+    def __init__(self) -> None:
+        self.items: list[tuple] = []   # (geometry, distance or None = keep as is, cap style)
+
+    def add(self, g, dist: float | None = None, cap: str = "round") -> None:
+        self.items.append((g, dist, cap))
+
+    def result(self) -> list:
+        out = [g for g, _, _ in self.items]
+        for cap in ("round", "flat"):
+            idx = [i for i, (_, dist, c) in enumerate(self.items) if dist is not None and c == cap]
+            if idx:
+                geoms = np.array([self.items[i][0] for i in idx], dtype=object)
+                dists = np.array([self.items[i][1] for i in idx], dtype=float)
+                # quad_segs=16 = Polygon.buffer()'s default (shapely.buffer()'s own is 8: coarser).
+                for i, g in zip(idx, shapely.buffer(geoms, dists, quad_segs=16, cap_style=cap)):
+                    out[i] = g
+        return out
+
+
+def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None = None) -> dict[str, list]:
     p = {**DEFAULTS, **(profile or {})}
     d = lambda m: _deg(m, lat_mid)  # noqa: E731
     road_k = float(p["road_clearance_scale"])
     bld = float(p["building_clearance_m"])
     rwy = float(p["runway_clearance_m"])
-    data = json.loads(osm_json.read_text(encoding="utf-8"))
-    out: dict[str, list] = {"roads": [], "buildings": [], "water": [], "runways": [],
-                            "airport_grounds": [], "corridors": []}
+    data = load_osm(osm_json)
+    cats = ("roads", "buildings", "water", "runways", "airport_grounds", "corridors")
+    acc = {k: _ToBuffer() for k in cats}
 
     def building(poly: Polygon) -> None:
-        out["buildings"].append(poly.buffer(d(bld)) if bld > 0 else poly)
+        acc["buildings"].add(poly, d(bld) if bld > 0 else None)
 
     for el in data.get("elements", []):
         tags = el.get("tags", {})
@@ -81,9 +113,11 @@ def osm_geometries(osm_json: Path, lat_mid: float, profile: dict | None = None) 
                 for poly in polys:
                     building(poly)
             elif tags.get("natural") == "water":
-                out["water"] += polys
+                for poly in polys:
+                    acc["water"].add(poly)
             elif tags.get("aeroway") == "aerodrome":
-                out["airport_grounds"] += polys
+                for poly in polys:
+                    acc["airport_grounds"].add(poly)
             continue
         pts = _coords(el)
         if len(pts) < 2:
@@ -93,42 +127,45 @@ def osm_geometries(osm_json: Path, lat_mid: float, profile: dict | None = None) 
         aw = tags.get("aeroway")
         if hw in ROAD_HALF_WIDTH:
             if road_k > 0:
-                out["roads"].append(LineString(pts).buffer(d(ROAD_HALF_WIDTH[hw] * road_k), cap_style="flat"))
+                acc["roads"].add(LineString(pts), d(ROAD_HALF_WIDTH[hw] * road_k), "flat")
         elif "building" in tags and closed:
             building(Polygon(pts))
         elif tags.get("natural") == "water" or tags.get("landuse") == "reservoir" or tags.get("waterway") == "riverbank":
             if closed:
-                out["water"].append(Polygon(pts))
+                acc["water"].add(Polygon(pts))
         elif tags.get("waterway") in ("river", "canal"):
-            out["water"].append(LineString(pts).buffer(d(RIVER_HALF_WIDTH)))
+            acc["water"].add(LineString(pts), d(RIVER_HALF_WIDTH))
         elif aw == "aerodrome" and closed:
-            out["airport_grounds"].append(Polygon(pts))
+            acc["airport_grounds"].add(Polygon(pts))
         elif aw == "runway":
             # Centre line (usual) → strip of ±runway_clearance_m; area → grown so the
             # strip reaches about the same distance from the centre.
             if closed:
-                out["runways"].append(Polygon(pts).buffer(d(max(rwy - 25, 5))))
+                acc["runways"].add(Polygon(pts), d(max(rwy - 25, 5)))
             else:
-                out["runways"].append(LineString(pts).buffer(d(rwy), cap_style="flat"))
+                acc["runways"].add(LineString(pts), d(rwy), "flat")
         elif aw in ("taxiway", "apron", "helipad"):
-            g = Polygon(pts).buffer(d(APRON_MARGIN)) if closed else LineString(pts).buffer(d(TAXIWAY_HALF_WIDTH))
-            out["runways"].append(g)
+            if closed:
+                acc["runways"].add(Polygon(pts), d(APRON_MARGIN))
+            else:
+                acc["runways"].add(LineString(pts), d(TAXIWAY_HALF_WIDTH))
         elif tags.get("railway") == "rail":
-            out["corridors"].append(LineString(pts).buffer(d(RAIL_HALF_WIDTH), cap_style="flat"))
+            acc["corridors"].add(LineString(pts), d(RAIL_HALF_WIDTH), "flat")
         elif tags.get("power") == "line":
-            out["corridors"].append(LineString(pts).buffer(d(POWER_HALF_WIDTH), cap_style="flat"))
+            acc["corridors"].add(LineString(pts), d(POWER_HALF_WIDTH), "flat")
+    out = {k: acc[k].result() for k in cats}
     if not int(p["clear_airport_grounds"]):
         out["airport_grounds"] = []
     return out
 
 
-def osm_tree_hints(osm_json: Path) -> dict[str, list]:
+def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
     """Real trees mapped in OSM: green areas (parks, gardens, golf, woods, forests),
     single trees (points), tree rows (lines), plantations; plus the areas that steer town trees
     (residential vs industrial/commercial land) and scrub (natural=scrub/heath)."""
     from forest.fetch.osm_pbf import NO_TOWN_TREE_LANDUSE, TOWN_LANDUSE, is_green_area, is_plantation, is_scrub_area
 
-    data = json.loads(osm_json.read_text(encoding="utf-8"))
+    data = load_osm(osm_json)
     out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": [],
                             "residential": [], "no_town_trees": [], "scrub": [], "airports": []}
 
@@ -149,19 +186,19 @@ def osm_tree_hints(osm_json: Path) -> dict[str, list]:
                 out["points"].append((el["lon"], el["lat"]))
             continue
         if el["type"] == "relation":
+            polys = _relation_polys(el)
             if is_plantation(tags) or (tags.get("landuse") == "forest" and tags.get("leaf_type")):
-                out["plantations"] += [(p, tags) for p in _relation_polys(el) if p.is_valid]
+                out["plantations"] += [(p, tags) for p in polys if p.is_valid]
             if is_green_area(tags):
-                out["green"] += _relation_polys(el)
-            areas(tags, _relation_polys(el))
+                out["green"] += polys
+            areas(tags, polys)
             continue
+        pts = _coords(el)
         if (is_plantation(tags) or (tags.get("landuse") == "forest" and (tags.get("leaf_type") or tags.get("genus")))):
-            pts = _coords(el)
             if len(pts) >= 4 and pts[0] == pts[-1]:
                 poly = Polygon(pts)
                 if poly.is_valid:
                     out["plantations"].append((poly, tags))
-        pts = _coords(el)
         if len(pts) < 2:
             continue
         if tags.get("natural") == "tree_row":
@@ -176,20 +213,57 @@ def osm_tree_hints(osm_json: Path) -> dict[str, list]:
     return out
 
 
+def _valid(geoms: list) -> list:
+    return [g for g in geoms if g is not None and not g.is_empty and g.is_valid]
+
+
 def coverage_mask(geoms: list, grid, min_cover: float = 0.5) -> np.ndarray:
-    valid = [g for g in geoms if g is not None and not g.is_empty and g.is_valid]
+    valid = _valid(geoms)
     if not valid:
         return np.zeros(grid.shape, dtype=bool)
-    return _coverage(valid, grid) >= min_cover
+    return _covered(valid, grid, min_cover)
 
 
-def _coverage(geoms: list, grid) -> np.ndarray:
-    """Share (0-1) of each grid cell covered by the geometries (drawn at SUPERSAMPLE×)."""
+def _geojson(geoms: list):
+    """(GeoJSON-like dict, 1) pairs for rasterize. Rasterio would call each shapely geometry's
+    __geo_interface__, which walks every coordinate in Python (≈14 s for a city tile); here the
+    coordinates come out of shapely as numpy arrays. Multipolygons are burnt part by part, which
+    covers exactly the same cells."""
+    parts = shapely.get_parts(np.asarray(geoms, dtype=object))
+    is_poly = shapely.get_type_id(parts) == 3
+    for g in parts[~is_poly]:            # anything unusual: let rasterio convert it
+        yield g, 1
+    polys = parts[is_poly]
+    for start in range(0, polys.size, _GEOJSON_BATCH):   # batches: never all coordinates at once
+        batch = polys[start:start + _GEOJSON_BATCH]
+        rings, ring_poly = shapely.get_rings(batch, return_index=True)
+        coords, ring_idx = shapely.get_coordinates(rings, return_index=True)
+        ring_coords = np.split(coords, np.cumsum(np.bincount(ring_idx, minlength=rings.size))[:-1])
+        first = np.searchsorted(ring_poly, np.arange(batch.size + 1))
+        for i in range(batch.size):
+            yield {"type": "Polygon",
+                   "coordinates": [ring_coords[r].tolist() for r in range(first[i], first[i + 1])]}, 1
+
+
+_GEOJSON_BATCH = 5000
+_RASTERIZE_BATCH = 50_000
+
+
+def _covered(geoms: list, grid, min_cover: float) -> np.ndarray:
+    """Cells covered by the geometries for at least `min_cover` of their area (drawn at
+    SUPERSAMPLE×). Counts sub-cells in uint8 instead of averaging in float64: same cells,
+    an eighth of the memory."""
     s = SUPERSAMPLE
     h, w = grid.shape
     tr: Affine = grid.transform @ Affine.scale(1 / s)
-    hi = rasterize(((g, 1) for g in geoms), out_shape=(h * s, w * s), transform=tr, dtype="uint8")
-    return hi.reshape(h, s, w, s).mean(axis=(1, 3))
+    hi = np.zeros((h * s, w * s), dtype=np.uint8)
+    # Burn in batches: rasterio builds every shape of a call in memory before burning
+    # (~2.5 GB extra for a city's roads in one call). Every shape burns 1, so it's the same cells.
+    shapes_ = _geojson(geoms)
+    while batch := list(itertools.islice(shapes_, _RASTERIZE_BATCH)):
+        rasterize(batch, out=hi, transform=tr)
+    # count / s² >= min_cover  ⇔  count >= min_cover · s²  (s² is a power of 2: exact in float)
+    return hi.reshape(h, s, w, s).sum(axis=(1, 3), dtype=np.uint8) >= min_cover * s * s
 
 
 def exclusion_mask(geoms: dict[str, list], grid, min_cover: float = 0.5) -> tuple[np.ndarray, dict[str, int]]:
@@ -197,11 +271,11 @@ def exclusion_mask(geoms: dict[str, list], grid, min_cover: float = 0.5) -> tupl
     mask = np.zeros(grid.shape, dtype=bool)
     stats = {}
     for name, items in geoms.items():
-        valid = [g for g in items if g is not None and not g.is_empty and g.is_valid]
+        valid = _valid(items)
         if not valid:
             stats[name] = 0
             continue
-        m = _coverage(valid, grid) >= min_cover
+        m = _covered(valid, grid, min_cover)
         stats[name] = int(m.sum())
         mask |= m
     return mask, stats

@@ -4,6 +4,7 @@ interface can be checked in an ordinary browser. The app itself uses pywebview."
 from __future__ import annotations
 
 import json
+import os
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,7 +44,8 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    # PORT (set by preview tools that pick a free port) wins over the command-line default.
+    port = int(os.environ.get("PORT") or (sys.argv[1] if len(sys.argv) > 1 else 8765))
     print(f"Forest Studio dev UI on http://127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 

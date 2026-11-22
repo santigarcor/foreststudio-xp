@@ -5,12 +5,13 @@ Facts from the X-Plane "DSF Usage" spec:
 - Exteriors wind counter-clockwise, holes clockwise; no self-intersection.
 - sim/exclude_for takes a rectangle "west/south/east/north".
 
-The text keywords (POLYGON_DEF, BEGIN_POLYGON, ...) follow DSFTool's -dsf2text output.
-TODO(phase0): confirm against a DSFTool decode of a real tile.
+The text keywords (POLYGON_DEF, BEGIN_POLYGON, ...) follow DSFTool's -dsf2text output
+(verified in phase 0: a compiled tile decodes back identically, see PLAN.md).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -91,6 +92,11 @@ class OverlayTile:
         return f"{self.lat // 10 * 10:+03d}{self.lon // 10 * 10:+04d}"
 
     def to_text(self, raster_dir: Path | None = None) -> str:
+        return "".join(line + "\n" for line in self.lines(raster_dir))
+
+    def lines(self, raster_dir: Path | None = None) -> Iterator[str]:
+        """The DSF text line by line (a city tile has millions of lines: never build them all
+        in memory at once; write_to streams them to the file)."""
         out = ["A", f"800 {self.agent}", "DSF2TEXT", ""]
         props = [
             ("sim/planet", "earth"),
@@ -125,23 +131,21 @@ class OverlayTile:
                     f"height={r.height} scale={r.scale:.6f} offset={r.offset:.6f} {raw}"
                 )
             out.append("")
+        yield from out
 
+        w, s, e, n = self.lon, self.lat, self.lon + 1, self.lat + 1
         for p in self.polygons:
             if not 0 <= p.density <= 255:
                 raise ValueError(f"density out of range: {p.density}")
-            out.append(f"BEGIN_POLYGON {index[p.asset]} {p.density + p.fill} 2")
+            yield f"BEGIN_POLYGON {index[p.asset]} {p.density + p.fill} 2"
             for ring, ccw in [(p.exterior, True)] + [(h, False) for h in p.holes]:
-                out.append("BEGIN_WINDING")
+                yield "BEGIN_WINDING"
                 for lon, lat in oriented(ring, ccw):
-                    self._check(lon, lat)
-                    out.append(f"POLYGON_POINT {lon:.9f} {lat:.9f}")
-                out.append("END_WINDING")
-            out.append("END_POLYGON")
-        return "\n".join(out) + "\n"
-
-    def _check(self, lon: float, lat: float) -> None:
-        if not (self.lon <= lon <= self.lon + 1 and self.lat <= lat <= self.lat + 1):
-            raise ValueError(f"point {lon},{lat} outside tile {self.name}")
+                    if not (w <= lon <= e and s <= lat <= n):
+                        raise ValueError(f"point {lon},{lat} outside tile {self.name}")
+                    yield f"POLYGON_POINT {lon:.9f} {lat:.9f}"
+                yield "END_WINDING"
+            yield "END_POLYGON"
 
     def write(self, scenery_root: Path) -> Path:
         path = scenery_root / "Earth nav data" / self.folder / f"{self.name}.txt"
@@ -150,5 +154,9 @@ class OverlayTile:
     def write_to(self, path: Path) -> Path:
         """Write the DSF text to an explicit file (raster .raw files go next to it)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.to_text(raster_dir=path.parent), encoding="utf-8")
+        # Same bytes as path.write_text(to_text()) (incl. Windows line endings), streamed.
+        with path.open("w", encoding="utf-8", buffering=1 << 20) as fh:
+            for line in self.lines(raster_dir=path.parent):
+                fh.write(line)
+                fh.write("\n")
         return path

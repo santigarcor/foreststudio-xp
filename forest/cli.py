@@ -53,15 +53,13 @@ def _tiles(args: argparse.Namespace) -> list:
 
 def cmd_fetch(args: argparse.Namespace) -> int:
     import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from forest import history
     from forest.fetch.elevation import fetch_elevation
     from forest.fetch.osm import fetch_osm
     from forest.fetch.osm_pbf import DEFAULT_PBF, extract_tiles
     from forest.fetch.rasters import fetch_all
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     from forest.resources import DOWNLOAD_WORKERS
 
     tiles = _tiles(args)
@@ -172,9 +170,8 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     from forest import history
     from forest.build import build_tile
-    from forest.tiles import Tile
-
     from forest.paths import dsf_path, studio_path
+    from forest.tiles import Tile
 
     tile = Tile.parse(args.tile)
     t0 = time.time()

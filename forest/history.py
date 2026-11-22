@@ -33,7 +33,7 @@ def record(kind: str, **data) -> None:
         fh.write(json.dumps({"kind": kind, "time": round(time.time()), **data}) + "\n")
 
 
-def _events() -> list[dict]:
+def events() -> list[dict]:
     if not HISTORY.exists():
         return []
     out = []
@@ -47,7 +47,7 @@ def _events() -> list[dict]:
 
 def averages() -> dict[str, float]:
     """Medians of the last measurements per quantity, falling back to DEFAULTS."""
-    ev = _events()[-500:]
+    ev = events()[-500:]
     avg = dict(DEFAULTS)
 
     def med(kind: str, key: str):

@@ -48,7 +48,7 @@ def test_error_in_a_build_thread_marks_the_tile_failed(sandbox, monkeypatch):
         raise RuntimeError("stats file is broken")
 
     monkeypatch.setattr(a, "_step", boom)
-    a._build_one("+06-076", "medium", "colombia", False, "")   # must not raise
+    a._build_one("+06-076", "medium", "colombia")   # must not raise
     assert a.job.failed == ["+06-076"] and not a.job.active
     assert any("stats file is broken" in ln for ln in a.job.log)
     res = a.job.record.d["results"]["+06-076"]

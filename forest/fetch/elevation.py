@@ -14,8 +14,8 @@ from forest import config
 from forest.tiles import Tile
 
 
-def base_mesh_dsf(tile: Tile) -> Path:
-    cfg = config.load()
+def base_mesh_dsf(tile: Tile, cfg: config.LocalConfig | None = None) -> Path:
+    cfg = cfg or config.load()
     return (
         cfg.xplane_root / "Global Scenery" / "X-Plane 12 Global Scenery"
         / "Earth nav data" / tile.folder / f"{tile.name}.dsf"
@@ -30,7 +30,7 @@ def fetch_elevation(tile: Tile) -> Path:
     txt = tile.cache / "base_mesh.txt"
     from forest import proc
 
-    r = proc.run([str(cfg.dsftool), "--dsf2text", str(base_mesh_dsf(tile)), str(txt)])  # hidden
+    r = proc.run([str(cfg.dsftool), "--dsf2text", str(base_mesh_dsf(tile, cfg)), str(txt)])  # hidden
     if r.returncode != 0:
         raise RuntimeError(f"DSFTool could not read the base mesh for {tile.name}: {r.stderr.strip()[-300:]}")
     raw = Path(str(txt) + ".elevation.raw")

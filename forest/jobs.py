@@ -37,6 +37,7 @@ class JobRecord:
     def __init__(self, data: dict):
         self.d = data
         self.lock = threading.Lock()
+        self._log_fh = None   # the job's log, kept open while it runs (see log())
 
     # ---------- create / load ----------
     @classmethod
@@ -101,10 +102,20 @@ class JobRecord:
 
     # ---------- updates ----------
     def log(self, line: str) -> None:
-        JOBS_DIR.mkdir(parents=True, exist_ok=True)
-        with self.lock, self.log_path.open("a", encoding="utf-8") as fh:
-            fh.write(line.rstrip("\n") + "\n")
+        # Opened once and line-buffered (the Build queue view reads the file while the job runs)
+        # instead of opening and closing it for every line of 3 parallel builds.
+        with self.lock:
+            if self._log_fh is None:
+                JOBS_DIR.mkdir(parents=True, exist_ok=True)
+                self._log_fh = self.log_path.open("a", encoding="utf-8", buffering=1)
+            self._log_fh.write(line.rstrip("\n") + "\n")
             self.d["log_lines"] = self.d.get("log_lines", 0) + 1
+
+    def close_log(self) -> None:
+        with self.lock:
+            if self._log_fh is not None:
+                self._log_fh.close()
+                self._log_fh = None
 
     def step(self, tile: str, step: str, status: str, note: str = "") -> None:
         if tile not in self.d["steps"]:
@@ -184,6 +195,7 @@ class JobRecord:
                     if self.d["steps"][t][s]["status"] in ("pending", "running"):
                         self.d["steps"][t][s]["status"] = "skipped"
         self.save()
+        self.close_log()
 
     # ---------- views ----------
     def progress(self) -> float:
@@ -234,14 +246,30 @@ class JobRecord:
 
 
 # ---------- module helpers ----------
+# Summaries of finished jobs by (file, modified time, size): the Build queue view polls
+# list_jobs every 1.5 s while a job runs, and old records never change.
+_summaries: dict[Path, tuple[tuple[int, int], dict]] = {}
+
+
 def list_jobs(limit: int = 200) -> list[dict]:
     if not JOBS_DIR.exists():
         return []
     out = []
     for p in sorted(JOBS_DIR.glob("*.json"), reverse=True)[:limit]:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size)
+        hit = _summaries.get(p)
+        if hit and hit[0] == key and hit[1]["status"] != "running":   # running: elapsed changes
+            out.append(hit[1])
+            continue
         rec = JobRecord.load(p.stem)
         if rec:
-            out.append(rec.summary())
+            summary = rec.summary()
+            _summaries[p] = (key, summary)
+            out.append(summary)
     return out
 
 
@@ -260,6 +288,7 @@ def delete(jid: str) -> bool:
     gone = False
     for suffix in (".json", ".log"):
         p = JOBS_DIR / f"{jid}{suffix}"
+        _summaries.pop(p, None)
         if p.exists():
             p.unlink()
             gone = True

@@ -435,3 +435,29 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   scrub and block town-tree points. After: 0 town trees and 0 scrub cells in SKRG. 92 forest
   cells remain (satellite tree cover inside the fence; cleared only with `clear_airport_grounds`).
   `BUILD_VERSION` 3.
+
+### 2026-11-21 — Code review: bug fixes, faster builds, cleanup
+
+- Bugs fixed (commit 37ac0c7): parallel builds raced saving the job record (PermissionError on
+  Windows, reproduced 49× in 30 trials); build-thread errors vanished; an apostrophe in the X-Plane
+  path broke local.toml; two quick clicks could start two jobs; cancel left DSFTool running; a
+  failed status call froze the progress bar; the Overpass fallback lacked the tree-hint features.
+- Faster builds, same tiles. Medellín (+06-076) 72 s / 5.31 GB peak → 56 s / 3.84 GB; San Andrés
+  (+12-082) 19 s / 4.31 GB → 12.5 s / 2.24 GB. Verified by rebuilding both tiles before/after in a
+  scratch data folder: same polygons (type, density, vertices), identical overlay/preview PNGs and
+  stats; the text compiles with DSFTool (13.3 MB, same as installed). Where the time went
+  (profile): shapely `__geo_interface__` inside rasterize (~14 s; now numpy → GeoJSON dicts,
+  burnt in batches), clipping every polygon to the tile (~7 s; now only those crossing the edge —
+  the clip kept the same vertices but restarted the rings, so the text is not byte-identical),
+  per-geometry buffers (~10 s; now one shapely call per category — note shapely.buffer's default
+  quad_segs is 8, Polygon.buffer's 16), 5 WorldCover reprojections (now a k×k block count when the
+  grid is exactly 1 or 2 source pixels per cell). Memory: osm.json parsed once and freed before
+  rasterising, full-tile arrays freed when done, uint8 level indices, int32 cell codes.
+- Measured and **not** changed: repairing invalid OSM polygons (43 of 2.55 M buildings, 0.03 km²
+  in 35 tiles — not worth it). **Parked** (changes tiles, owner decides later): OSM multipolygon
+  holes are dropped — 511 km² of river/lake islands are cut as water in the 35 cached tiles, ~41 km²
+  of it forest on +07-074 (Bajo Cauca) and ~42 km² on +06-075 (Magdalena Medio); needs
+  `osm_pbf.VERSION` + `BUILD_VERSION` bumps.
+- Cleanup: ruff in dev deps + CI, dead code removed, shared helpers, clear error for a forest type
+  missing from the X-Plane library, job log kept open while running, cached job summaries and
+  ecoregion names, devserver honours `PORT`.

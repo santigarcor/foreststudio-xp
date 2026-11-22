@@ -81,3 +81,16 @@ def test_concurrent_saves_never_fail(sandbox):
         t.join()
     assert errors == []
     assert JobRecord.load(rec.id).id == rec.id
+
+
+def test_log_file_is_closed_when_the_job_finishes_and_summaries_refresh(sandbox):
+    a = JobRecord.new(["+06-076"], "medium", "colombia", 1)
+    a.log("one")
+    a.log("two")
+    assert jobs.read_log(a.id) == ["one", "two"]          # readable while the job runs
+    assert jobs.list_jobs()[0]["status"] == "running"
+    a.tile_finished("+06-076", 0, [], {})
+    a.finish()
+    assert a._log_fh is None
+    assert jobs.list_jobs()[0]["status"] == "done"         # the cached summary was refreshed
+    assert jobs.delete(a.id) and jobs.list_jobs() == []

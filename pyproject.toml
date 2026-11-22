@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 forest = "forest.cli:main"
@@ -31,6 +31,24 @@ include = ["forest*"]
 
 [tool.setuptools.package-data]
 "forest.app" = ["ui/*", "icons/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["tools"]
+
+[tool.ruff.lint]
+# pyflakes (unused imports/variables, undefined names), pycodestyle errors, import order, bugbear
+select = ["F", "E", "W", "I", "B"]
+ignore = [
+  "E501",   # long lines: a few help texts and tables read better on one line
+  "E402",   # imports after code: forest.build silences a rasterio warning before importing more
+  "E731",   # lambda assignments: short local helpers (d = lambda m: ...) are intentional
+  "B905",   # zip() without strict=: Python 3.11 support, zips are over equal-length data
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["forest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

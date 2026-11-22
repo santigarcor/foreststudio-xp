@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -15,8 +14,7 @@ from pathlib import Path
 from forest import config
 from forest.app import settings as st
 from forest.assets.catalog import load_catalog
-from forest.build import (OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SCRUB, OVERLAY_SHADE,
-                          OVERLAY_TOWN)
+from forest.build import OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SCRUB, OVERLAY_SHADE, OVERLAY_TOWN
 from forest.config import REPO_ROOT  # the code folder (subprocess cwd); data is config.DATA_ROOT
 from forest.tiles import CACHE, Tile
 
@@ -64,7 +62,6 @@ class Api:
 
         self.migration = migrate.run()   # one-time: old in-repo cache/out/settings -> ~/.foreststudio
         self.job = Job()
-        self.record = None          # forest.jobs.JobRecord of the running job
         jobs.mark_interrupted()     # jobs left "running" by a closed app
         self.reload()
 
@@ -462,8 +459,10 @@ class Api:
         from forest.resources import auto_workers
         return auto_workers()
 
-    def start_build(self, tiles: list[str], profile: str, region: str, install: bool, pack: str,
+    def start_build(self, tiles: list[str], profile: str, region: str, install: bool = False, pack: str = "",
                     workers: int = 0) -> dict:
+        """`install` and `pack` are unused (kept so the page's call signature stays the same):
+        the pack is one linked folder, so every built tile is in X-Plane at once."""
         if self.job.running:
             return {"ok": False, "error": "a build is already running"}
         try:
@@ -486,7 +485,7 @@ class Api:
             j.record = JobRecord.new(names, profile, region, n)
             for t in names:
                 j.record.step(t, "data", "running")
-            threading.Thread(target=self._run, args=(names, profile, region, install, pack, n), daemon=True).start()
+            threading.Thread(target=self._run, args=(names, profile, region, n), daemon=True).start()
         except BaseException:
             j.running, j.record = False, None
             raise
@@ -634,7 +633,7 @@ class Api:
             with self.job.lock:
                 self.job.procs.discard(proc)
 
-    def _build_one(self, name, profile, region, install, pack) -> None:
+    def _build_one(self, name: str, profile: str, region: str) -> None:
         j = self.job
         if j.cancel:
             return
@@ -675,7 +674,7 @@ class Api:
         out["dsf_mb"] = round(history.dir_mb(dsf_path(region, t)), 2)
         return out
 
-    def _run(self, names, profile, region, install, pack, workers: int = 1) -> None:
+    def _run(self, names: list[str], profile: str, region: str, workers: int = 1) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         j = self.job
@@ -694,7 +693,7 @@ class Api:
             j.add(f"=== building {len(names)} tile(s), {workers} at a time ===")
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 for name in names:
-                    pool.submit(self._build_one, name, profile, region, install, pack)
+                    pool.submit(self._build_one, name, profile, region)
             if j.cancel:
                 j.add("cancelled — finished tiles are kept")
         finally:

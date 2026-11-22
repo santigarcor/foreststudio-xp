@@ -36,14 +36,14 @@ def build_clip() -> Path:
     if not ZIP.exists():
         raise FileNotFoundError(f"ecoregions zip not found: {ZIP}")
     region = box(*REGION_BOUNDS)
-    z = zipfile.ZipFile(ZIP)
-    shp = io.BytesIO(z.read("Ecoregions2017.shp"))
-    dbf = io.BytesIO(z.read("Ecoregions2017.dbf"))
-    shx = io.BytesIO(z.read("Ecoregions2017.shx"))
+    with zipfile.ZipFile(ZIP) as z:
+        shp = io.BytesIO(z.read("Ecoregions2017.shp"))
+        dbf = io.BytesIO(z.read("Ecoregions2017.dbf"))
+        shx = io.BytesIO(z.read("Ecoregions2017.shx"))
     r = shapefile.Reader(shp=shp, dbf=dbf, shx=shx, encoding="latin-1")
     fields = [f[0] for f in r.fields[1:]]
     feats = []
-    for i, sr in enumerate(r.iterShapeRecords()):
+    for sr in r.iterShapeRecords():
         x0, y0, x1, y1 = sr.shape.bbox
         if x1 < REGION_BOUNDS[0] or x0 > REGION_BOUNDS[2] or y1 < REGION_BOUNDS[1] or y0 > REGION_BOUNDS[3]:
             continue
@@ -63,8 +63,19 @@ def build_clip() -> Path:
     return out
 
 
+# The clipped GeoJSON, parsed once per file version: the app asks for the ecoregion names
+# on every get_state (each build process still reads it once).
+_features: tuple[tuple, list[dict]] | None = None
+
+
 def load_features() -> list[dict]:
-    return json.loads(build_clip().read_text(encoding="utf-8"))["features"]
+    global _features
+    path = build_clip()
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if _features is None or _features[0] != key:
+        _features = (key, json.loads(path.read_text(encoding="utf-8"))["features"])
+    return _features[1]
 
 
 def ecoregion_names() -> list[str]:

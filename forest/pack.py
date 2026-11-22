@@ -19,8 +19,9 @@ from forest import config
 from forest.paths import pack_name, pack_root
 
 
-def _link_path(region: str) -> Path:
-    return config.load().xplane_root / "Custom Scenery" / pack_name(region)
+def _link_path(region: str, xplane_root: Path | None = None) -> Path:
+    root = xplane_root if xplane_root is not None else config.load().xplane_root
+    return root / "Custom Scenery" / pack_name(region)
 
 
 def make_link(target: Path, link: Path) -> None:
@@ -55,9 +56,10 @@ def _is_junction(p: Path) -> bool:
         return False
 
 
-def _ini_line(region: str) -> int | None:
+def _ini_line(region: str, xplane_root: Path | None = None) -> int | None:
     """Line number of the pack in scenery_packs.ini (None if X-Plane doesn't list it yet)."""
-    ini = config.load().xplane_root / "Custom Scenery" / "scenery_packs.ini"
+    root = xplane_root if xplane_root is not None else config.load().xplane_root
+    ini = root / "Custom Scenery" / "scenery_packs.ini"
     try:
         lines = ini.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -70,7 +72,8 @@ def _ini_line(region: str) -> int | None:
 
 
 def pack_status(region: str) -> dict:
-    link, target = _link_path(region), pack_root(region)
+    xp = config.load().xplane_root   # read local.toml once (it may also run X-Plane detection)
+    link, target = _link_path(region, xp), pack_root(region)
     linked = _is_junction(link)
     points_ok = False
     if linked:
@@ -78,7 +81,7 @@ def pack_status(region: str) -> dict:
             points_ok = Path(os.path.realpath(link)).resolve() == target.resolve()
         except OSError:
             points_ok = False
-    line = _ini_line(region)
+    line = _ini_line(region, xp)
     tiles = sorted(p.stem for p in target.glob("Earth nav data/*/*.dsf")) if target.exists() else []
     return {
         "pack": pack_name(region), "link": str(link), "target": str(target),
