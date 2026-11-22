@@ -57,3 +57,27 @@ def test_cancel_marks_remaining_steps_skipped(sandbox):
     a.finish(cancelled=True)
     assert a.d["status"] == "cancelled"
     assert all(s["status"] == "skipped" for s in a.d["steps"]["+06-075"].values())
+
+
+def test_concurrent_saves_never_fail(sandbox):
+    # Parallel builds finish together and all save the same record (raced on Windows before).
+    import threading
+
+    rec = JobRecord.new(["+06-076", "+06-075", "+06-074"], "medium", "colombia", 3)
+    errors = []
+
+    def go():
+        try:
+            for _ in range(30):
+                rec.save()
+                JobRecord.load(rec.id)      # the Build queue view reads it meanwhile
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert JobRecord.load(rec.id).id == rec.id

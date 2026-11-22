@@ -192,7 +192,9 @@ async function startDataJob(kind, tiles, force) {
 }
 
 async function waitForDataJob() {   // refresh this page when the download finishes
-  const j = await api().job_status(1e12);
+  let j;
+  try { j = await api().job_status(1e12); }
+  catch (e) { setTimeout(waitForDataJob, 3000); return; }   // keep waiting after a failed call
   if (j.running) { setTimeout(waitForDataJob, 2000); return; }
   if (currentView === "data") refreshData();
   if (typeof refreshStatus === "function") refreshStatus();

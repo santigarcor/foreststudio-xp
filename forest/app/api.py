@@ -41,6 +41,15 @@ class Job:
         self.workers = 1
         self.record = None                          # forest.jobs.JobRecord (saved job)
 
+    def claim(self) -> bool:
+        """Mark a job as running unless one already is (one check-and-set under the lock:
+        pywebview runs each JS call on its own thread, so two quick clicks could both start one)."""
+        with self.lock:
+            if self.running:
+                return False
+            self.running = True
+            return True
+
     def add(self, line: str) -> None:
         with self.lock:
             self.seq += 1
@@ -469,12 +478,18 @@ class Api:
         from forest.jobs import JobRecord
 
         j = self.job
-        j.running, j.cancel, j.done, j.failed, j.queue = True, False, [], [], list(names)
-        j.current, j.workers = None, n
-        j.record = JobRecord.new(names, profile, region, n)
-        for t in names:
-            j.record.step(t, "data", "running")
-        threading.Thread(target=self._run, args=(names, profile, region, install, pack, n), daemon=True).start()
+        if not j.claim():
+            return {"ok": False, "error": "a build is already running"}
+        try:
+            j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
+            j.current, j.workers = None, n
+            j.record = JobRecord.new(names, profile, region, n)
+            for t in names:
+                j.record.step(t, "data", "running")
+            threading.Thread(target=self._run, args=(names, profile, region, install, pack, n), daemon=True).start()
+        except BaseException:
+            j.running, j.record = False, None
+            raise
         return {"ok": True, "workers": n, "job": j.record.id}
 
     # ---------- data (downloads without building) ----------
@@ -542,12 +557,18 @@ class Api:
         else:
             return {"ok": False, "error": f"unknown data job '{kind}'"}
         j = self.job
-        j.running, j.cancel, j.done, j.failed, j.queue = True, False, [], [], list(names)
-        j.current, j.workers = label, 1
-        j.record = JobRecord.new(names, "", region, 1, kind=rkind)
-        for t in names:
-            j.record.step(t, "data", "running")
-        threading.Thread(target=self._run_data, args=(args, label), daemon=True).start()
+        if not j.claim():
+            return {"ok": False, "error": "A build or download is already running."}
+        try:
+            j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
+            j.current, j.workers = label, 1
+            j.record = JobRecord.new(names, "", region, 1, kind=rkind)
+            for t in names:
+                j.record.step(t, "data", "running")
+            threading.Thread(target=self._run_data, args=(args, label), daemon=True).start()
+        except BaseException:
+            j.running, j.record = False, None
+            raise
         return {"ok": True, "job": j.record.id, "tiles": len(names)}
 
     def _run_data(self, args: list[str], label: str) -> None:
@@ -573,9 +594,9 @@ class Api:
         self.job.cancel = True
         with self.job.lock:
             procs = list(self.job.procs)
+        from forest import proc as hidden
         for pr in procs:
-            if pr.poll() is None:
-                pr.terminate()
+            hidden.terminate_tree(pr)   # the build and its DSFTool
         return {"ok": True}
 
     def job_status(self, after: int = 0) -> dict:
@@ -623,9 +644,22 @@ class Api:
         j.add(f"=== {name}: building ({profile}, {region}) ===")
         args = ["build", "--tile", name, "--profile", profile, "--region", region, "--compile"]
         tail: list[str] = []
-        rc = self._step(args, tag=name, tail=tail)
-        if j.record is not None:
-            j.record.tile_finished(name, rc, tail, self._tile_result(name, region) if rc == 0 else None)
+        rc = 1
+        # This runs in a thread pool whose futures nobody reads: an exception here would vanish
+        # and leave the tile "building" forever, so every error ends as a failed tile.
+        try:
+            rc = self._step(args, tag=name, tail=tail)
+            if j.record is not None:
+                j.record.tile_finished(name, rc, tail, self._tile_result(name, region) if rc == 0 else None)
+        except Exception as exc:  # noqa: BLE001 - report and carry on with the other tiles
+            rc = 1
+            err = f"{type(exc).__name__}: {exc}"
+            j.add(f"[{name}] ERROR: {err}")
+            if j.record is not None:
+                try:
+                    j.record.tile_finished(name, rc, tail + [err], None)
+                except Exception:  # noqa: BLE001 - the record itself is broken; the log has it
+                    pass
         with j.lock:
             j.active.discard(name)
             if not j.cancel or rc == 0:

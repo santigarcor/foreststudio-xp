@@ -581,7 +581,10 @@ function setRunning(on) {
 
 async function poll() {
   clearTimeout(polling);
-  const j = await api().job_status(logSeq);
+  let j;
+  // One failed call must not stop the polling (the progress bar would stay "running" forever).
+  try { j = await api().job_status(logSeq); }
+  catch (e) { polling = setTimeout(poll, 2000); return; }
   // The full log lives in the Build queue; here only remember how far we've read.
   for (const ln of j.lines) logSeq = Math.max(logSeq, +ln.split("\t")[0]);
   const total = window._buildTotal || 1, n = j.done.length + j.failed.length;

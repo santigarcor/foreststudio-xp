@@ -238,14 +238,15 @@ def save(xplane_root: Path | str, dsftool: Path | str | None = None, path: Path 
     path = path or LOCAL_TOML
     text = ("# ForestStudio XP - this machine's settings (written by the app; not in git).\n"
             "# ForestStudio only READS from the X-Plane install, except its own Custom Scenery/forest_* link.\n\n"
-            f"[xplane]\nroot = '{Path(xplane_root)}'\n")
+            # json.dumps = a TOML basic string; a literal '...' breaks on paths like C:\Users\O'Neil
+            f"[xplane]\nroot = {json.dumps(str(Path(xplane_root)))}\n")
     if dsftool and Path(dsftool).resolve() != BUNDLED_DSFTOOL.resolve():
         ds = Path(dsftool)
         try:
             ds_txt = str(ds.resolve().relative_to(REPO_ROOT))
         except ValueError:
             ds_txt = str(ds)
-        text += f"\n[tools]\n# custom DSFTool (optional; the bundled one is used otherwise)\ndsftool = '{ds_txt}'\n"
+        text += f"\n[tools]\n# custom DSFTool (optional; the bundled one is used otherwise)\ndsftool = {json.dumps(ds_txt)}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path

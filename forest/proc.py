@@ -34,6 +34,28 @@ def popen(cmd: list[str], **kw) -> subprocess.Popen:
                             stdin=subprocess.DEVNULL, **kw)
 
 
+def terminate_tree(p: subprocess.Popen) -> None:
+    """Stop a process and everything it started. Popen.terminate() alone leaves children
+    running on Windows (a cancelled build kept its DSFTool compiling)."""
+    if p.poll() is not None:
+        return
+    try:
+        import psutil
+
+        children = psutil.Process(p.pid).children(recursive=True)
+    except Exception:  # noqa: BLE001 - psutil missing or the process just ended
+        children = []
+    for c in children:
+        try:
+            c.terminate()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+    try:
+        p.terminate()
+    except OSError:
+        pass
+
+
 def python_exe() -> str:
     """A console-less Python for child processes: python.exe works with pipes and is started
     hidden; pythonw.exe would lose stdout on some systems."""

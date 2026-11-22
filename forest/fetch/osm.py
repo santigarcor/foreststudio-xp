@@ -1,6 +1,9 @@
-"""OpenStreetMap features that must not get trees: roads, buildings, water, airports.
+"""OpenStreetMap features per tile: cut-outs (roads, buildings, water, airports, rail, power)
+and tree hints (single trees, tree rows, woods, parks, plantations, town land use, scrub).
 
-Fetched once per tile from the Overpass API (only the tile bbox is sent) and cached.
+Fallback only: the local Geofabrik .pbf (osm_pbf.py) is preferred. Fetched once per tile from
+the Overpass API (only the tile bbox is sent) and cached. Keep QUERY in step with
+osm_pbf.wanted_way / wanted_area_relation.
 """
 
 from __future__ import annotations
@@ -30,6 +33,19 @@ QUERY = """
   relation["aeroway"="aerodrome"]({s},{w},{n},{e});
   way["railway"="rail"]({s},{w},{n},{e});
   way["power"="line"]({s},{w},{n},{e});
+  node["natural"="tree"]({s},{w},{n},{e});
+  way["natural"~"^(tree_row|wood|scrub|heath)$"]({s},{w},{n},{e});
+  relation["natural"~"^(wood|scrub|heath)$"]({s},{w},{n},{e});
+  way["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
+  relation["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
+  way["landuse"="farmland"]["crop"]({s},{w},{n},{e});
+  way["landuse"="farmland"]["trees"]({s},{w},{n},{e});
+  way["landuse"="farmland"]["produce"]({s},{w},{n},{e});
+  relation["landuse"="farmland"]["crop"]({s},{w},{n},{e});
+  relation["landuse"="farmland"]["trees"]({s},{w},{n},{e});
+  relation["landuse"="farmland"]["produce"]({s},{w},{n},{e});
+  way["leisure"~"^(park|golf_course|garden|nature_reserve)$"]({s},{w},{n},{e});
+  relation["leisure"~"^(park|golf_course|garden|nature_reserve)$"]({s},{w},{n},{e});
 );
 out geom qt;
 """

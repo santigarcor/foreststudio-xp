@@ -19,8 +19,9 @@ def test_save_and_load_relative_dsftool(sandbox, monkeypatch, tmp_path):
     sandbox.dsftool.write_bytes(b"x")
     monkeypatch.setattr(config, "BUNDLED_DSFTOOL", tmp_path / "elsewhere" / "DSFTool.exe")  # => custom
     config.save(sandbox.xplane, sandbox.dsftool)
-    text = (sandbox.root / "config" / "local.toml").read_text()
-    assert "tools\\xptools" in text or "tools/xptools" in text     # stored relative to the project
+    import tomllib
+    saved = tomllib.loads((sandbox.root / "config" / "local.toml").read_text(encoding="utf-8"))
+    assert saved["tools"]["dsftool"].replace("\\", "/") == "tools/xptools/windows/DSFTool.exe"  # relative
     c = config.load()
     assert c.from_file and c.xplane_root == sandbox.xplane and c.dsftool == sandbox.dsftool
     assert config.check_dsftool(c.dsftool)["ok"]
@@ -81,3 +82,44 @@ def test_hidden_process_runs_and_captures_output():
     assert r.returncode == 0 and r.stdout.strip() == "hi"
     if sys.platform == "win32":
         assert proc.HIDDEN != 0          # CREATE_NO_WINDOW is used on Windows
+
+
+def test_xplane_path_with_apostrophe_round_trips(sandbox, tmp_path):
+    # A TOML literal string ('...') can't hold a quote: C:\Users\O'Neil broke local.toml.
+    p = tmp_path / "local.toml"
+    weird = tmp_path / "O'Neil \"x\" ñ" / "X-Plane 12"
+    config.save(weird, path=p)
+    assert config.load(p).xplane_root == weird
+
+
+def test_terminate_tree_stops_children(tmp_path):
+    import subprocess
+    import time
+
+    import psutil
+
+    from forest import proc
+    # A parent that starts a long-running child (like a build starting DSFTool), then waits.
+    code = ("import subprocess, sys, time; "
+            "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "print(c.pid, flush=True); time.sleep(60)")
+    parent = proc.popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    child_pid = int(parent.stdout.readline())
+    proc.terminate_tree(parent)
+    parent.wait(timeout=10)
+    deadline = time.time() + 10
+    while psutil.pid_exists(child_pid) and time.time() < deadline:
+        try:
+            if psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE:
+                break
+        except psutil.NoSuchProcess:
+            break
+        time.sleep(0.1)
+    alive = psutil.pid_exists(child_pid)
+    if alive:
+        try:
+            alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            alive = False
+    assert not alive
+    parent.stdout.close()

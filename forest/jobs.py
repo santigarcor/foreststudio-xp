@@ -84,9 +84,20 @@ class JobRecord:
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
         p = JOBS_DIR / f"{self.id}.json"
         tmp = p.with_suffix(".json.tmp")
+        # Write and swap under the lock: parallel builds finish at the same time and share
+        # the .tmp name (an unlocked replace raced and failed with PermissionError on Windows).
         with self.lock:
             tmp.write_text(json.dumps(self.d, indent=1), encoding="utf-8")
-        os.replace(tmp, p)
+            # Windows refuses the swap while another thread reads the record (Build queue
+            # view polling list_jobs): retry briefly instead of losing the update.
+            for attempt in range(20):
+                try:
+                    os.replace(tmp, p)
+                    break
+                except PermissionError:
+                    if attempt == 19:
+                        raise
+                    time.sleep(0.05)
 
     # ---------- updates ----------
     def log(self, line: str) -> None:
