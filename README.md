@@ -9,7 +9,8 @@ place, the wrong type, or missing. ForestStudio XP builds a forest overlay tile 
 10 m satellite land cover, tree-cover maps, OpenStreetMap and biome maps, using X-Plane's own
 default tree models. It's a desktop app: pick tiles on a map, press **Build**, fly.
 
-It currently covers **Colombia**. More regions may come later.
+It currently covers **Colombia**. More regions may come later: each region is one small file
+in `config/regions/` (map area, OpenStreetMap download, whether seasonal trees are allowed).
 
 ## What you get
 
@@ -119,7 +120,7 @@ notices, as their licenses require. If you share tiles you built, keep that file
 
 | Data | Used for | License |
 |---|---|---|
-| [OpenStreetMap](https://www.openstreetmap.org/copyright), via [Geofabrik](https://download.geofabrik.de) | roads, buildings, water, airports, parks, single trees, plantations | © OpenStreetMap contributors, [ODbL 1.0](https://opendatacommons.org/licenses/odbl/) |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright), via [Geofabrik](https://download.geofabrik.de) | roads, buildings, water, airports, parks, single trees, plantations, mangroves | © OpenStreetMap contributors, [ODbL 1.0](https://opendatacommons.org/licenses/odbl/) |
 | [ESA WorldCover 2021 v200](https://esa-worldcover.org) | land cover at 10 m (trees, mangroves) | © ESA WorldCover project 2021 / contains modified Copernicus Sentinel data (2021) processed by the ESA WorldCover consortium, CC BY 4.0 |
 | [Hansen Global Forest Change v1.12](https://glad.earthengine.app/view/global-forest-change) | tree cover share, recent forest loss | Hansen et al. 2013, *Science* 342: 850–853, CC BY 4.0 |
 | [RESOLVE Ecoregions 2017](https://ecoregions.appspot.com) | biomes (which forest type grows where) | Dinerstein et al. 2017, *BioScience* 67(6): 534–545, CC BY 4.0 |

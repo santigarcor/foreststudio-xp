@@ -11,16 +11,19 @@ import time
 from collections import deque
 from pathlib import Path
 
-from forest import config
+from forest import config, fsutil
 from forest.app import settings as st
 from forest.assets.catalog import load_catalog
 from forest.build import OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SCRUB, OVERLAY_SHADE, OVERLAY_TOWN
 from forest.config import REPO_ROOT  # the code folder (subprocess cwd); data is config.DATA_ROOT
 from forest.tiles import CACHE, Tile
 
-# Map extent offered in the tile picker (Colombia incl. San Andrés, plus margin).
-GRID_LAT = (-5, 13)
-GRID_LON = (-82, -66)
+
+def _is_tile_in(name: str, region) -> bool:
+    try:
+        return region.contains(Tile.parse(name))
+    except ValueError:
+        return False
 
 
 class Job:
@@ -90,6 +93,12 @@ class Api:
         self.evergreen_all = sorted(
             f["virtual"] for f in cat
             if not f["seasons"] and "planters" not in f["virtual"] and f["max_trees_per_km2"])
+        # The same lists with seasonal types too, for regions that allow them (evergreen_only = false).
+        self.forests = sorted(
+            f["virtual"] for f in cat
+            if "/trees/" not in f["virtual"] and "planters" not in f["virtual"] and f["mesh_count"] >= 5)
+        self.forests_all = sorted(
+            f["virtual"] for f in cat if "planters" not in f["virtual"] and f["max_trees_per_km2"])
         self.asset_info = {f["virtual"]: {"trees_km2": f["max_trees_per_km2"], "species": f["species"],
                                           "tris_tree": f.get("avg_tree_tris"),
                                           "mtris_km2": f.get("tris_per_km2_m"),
@@ -174,36 +183,45 @@ class Api:
         win.destroy()
         return {"ok": True}
 
-    def setup_checks(self) -> dict:
+    def setup_checks(self, region: str = "") -> dict:
         """Status line like OrthoStudio's: how many required checks pass."""
-        from forest.fetch.osm_pbf import DEFAULT_PBF
+        from forest import regions
+        from forest.fetch import sources
+        from forest.fetch.ecoregions import clipped_path
+
+        region = region or regions.default_name()
         items = {
             "X-Plane 12 folder": config.check_xplane(self.cfg.xplane_root)["ok"],
             "DSFTool": config.check_dsftool(self.cfg.dsftool)["ok"],
             "forest catalog": self.catalog_ok,
-            "OSM country extract": DEFAULT_PBF.exists(),
-            "ecoregions map": (config.CACHE_ROOT / "ecoregions" / "colombia.geojson").exists()
-                              or (config.CACHE_ROOT / "ecoregions" / "raw" / "Ecoregions2017.zip").exists(),
+            "OSM country extract": regions.get(region).osm_file.exists(),
+            "ecoregions map": clipped_path(region).exists() or sources.ecoregions_zip().exists(),
         }
         return {"items": items, "ok": sum(items.values()), "total": len(items)}
 
     # ---------- state ----------
     def get_state(self) -> dict:
+        from forest import regions
+
+        default = regions.default_name()
         return {
             "profiles": st.list_profiles(),
-            "regions": st.list_regions(),
+            "regions": regions.names(),
+            "region_info": {n: regions.get(n).info() for n in regions.names()},
+            "default_region": default,
             "schema": {k: {"type": v[0].__name__, "min": v[1], "max": v[2], "step": v[3],
                            "group": v[4], "label": v[5], "help": v[6]}
                        for k, v in st.PROFILE_SCHEMA.items()},
             "density_levels_help": st.DENSITY_LEVELS_HELP,
             "fps_impact": st.FPS_IMPACT,
-            "ecoregions": self._ecoregions(),
+            "ecoregions": self.ecoregion_names(default),
             "overlay": {"palette": OVERLAY_PALETTE, "shade": OVERLAY_SHADE, "cut": OVERLAY_CUT, "osm": OVERLAY_OSM,
                         "scrub": OVERLAY_SCRUB, "town": OVERLAY_TOWN},
             "evergreen": self.evergreen,
             "evergreen_all": self.evergreen_all,
+            "forests": self.forests,          # incl. seasonal types, for regions that allow them
+            "forests_all": self.forests_all,
             "asset_info": self.asset_info,
-            "grid": {"lat": GRID_LAT, "lon": GRID_LON},
             "xplane_root": str(self.cfg.xplane_root),
             "dsftool_ok": self.cfg.dsftool.exists(),
             "setup": self.setup_checks(),
@@ -211,10 +229,11 @@ class Api:
         }
 
     @staticmethod
-    def _ecoregions() -> list[str]:
+    def ecoregion_names(region: str) -> list[str]:
+        """Ecoregion names inside the region (for the biome editor); [] until the map is downloaded."""
         try:
             from forest.fetch.ecoregions import ecoregion_names
-            return ecoregion_names()
+            return ecoregion_names(region)
         except (OSError, FileNotFoundError, ValueError):
             return []
 
@@ -222,6 +241,7 @@ class Api:
         """Per tile: land / data cached / built / installed (= built and the region's
         pack is linked into X-Plane), the last build's stats and, for built tiles, why they're
         outdated compared with `profile` + the current forest types + the downloaded data."""
+        from forest import regions
         from forest.build import Settings, outdated_reasons, settings_fingerprint
         from forest.pack import pack_status
         from forest.paths import dsf_path, studio_path
@@ -235,29 +255,27 @@ class Api:
         gs = xp / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"
         linked = pack_status(region)["installed"]
         out: dict[str, dict] = {}
-        for lat in range(GRID_LAT[0], GRID_LAT[1]):
-            for lon in range(GRID_LON[0], GRID_LON[1]):
-                t = Tile(lat, lon)
-                c = CACHE / t.name
-                built = dsf_path(region, t).exists()
-                stats = studio_path(region, t, ".stats.json")
-                s = {
-                    "land": (gs / t.folder / f"{t.name}.dsf").exists(),
-                    "cached": (c / "worldcover.tif").exists() and (c / "osm.json").exists(),
-                    "built": built,
-                    "installed": built and linked,
-                }
-                j = None
-                if stats.exists():
-                    try:
-                        j = json.loads(stats.read_text(encoding="utf-8"))
-                        s["stats"] = {k: j.get(k) for k in
-                                      ("estimated_trees", "forest_km2", "polygons", "budget_scale", "profile", "seconds")}
-                    except (OSError, ValueError):
-                        j = None
-                if built and fp:
-                    s["outdated"] = outdated_reasons(j, t, profile, region, fp)
-                out[t.name] = s
+        for t in regions.get(region).tiles():
+            c = CACHE / t.name
+            built = dsf_path(region, t).exists()
+            stats = studio_path(region, t, ".stats.json")
+            s = {
+                "land": (gs / t.folder / f"{t.name}.dsf").exists(),
+                "cached": (c / "worldcover.tif").exists() and (c / "osm.json").exists(),
+                "built": built,
+                "installed": built and linked,
+            }
+            j = None
+            if stats.exists():
+                try:
+                    j = json.loads(stats.read_text(encoding="utf-8"))
+                    s["stats"] = {k: j.get(k) for k in
+                                  ("estimated_trees", "forest_km2", "polygons", "budget_scale", "profile", "seconds")}
+                except (OSError, ValueError):
+                    j = None
+            if built and fp:
+                s["outdated"] = outdated_reasons(j, t, profile, region, fp)
+            out[t.name] = s
         return out
 
     # ---------- X-Plane pack (one linked folder) ----------
@@ -315,7 +333,10 @@ class Api:
 
     def save_rules(self, region: str, data: dict) -> dict:
         try:
-            st.write_rules(region, data, set(self.evergreen_all))
+            from forest import regions
+
+            allowed = self.evergreen_all if regions.get(region).evergreen_only else self.forests_all
+            st.write_rules(region, data, set(allowed))
             return {"ok": True}
         except (ValueError, KeyError, TypeError) as exc:
             return {"ok": False, "error": str(exc)}
@@ -349,7 +370,6 @@ class Api:
 
     def delete_preview(self, tiles: list[str], region: str = "colombia", pack: str = "") -> dict:
         """What deleting these tiles would remove, per kind, with sizes (nothing is deleted)."""
-        from forest import history
 
         try:
             ts = [Tile.parse(x) for x in tiles]
@@ -360,7 +380,7 @@ class Api:
             for kind, paths in self._tile_files(t, region).items():
                 if paths:
                     res[kind]["tiles"] += 1
-                    res[kind]["mb"] += sum(history.dir_mb(q) for q in paths)
+                    res[kind]["mb"] += sum(fsutil.size_mb(q) for q in paths)
         for v in res.values():
             v["mb"] = round(v["mb"], 1)
         return {"ok": True, "tiles": len(ts), "pack_linked": self.pack_status(region)["installed"], **res}
@@ -500,9 +520,9 @@ class Api:
         from forest.fetch.osm_pbf import is_current
         from forest.paths import dsf_path
 
-        osm = sources.status(sources.osm_file(region), sources.OSM_URLS[region])
+        osm = sources.status(sources.osm_file(region), sources.osm_url(region))
         eco = sources.status(sources.ecoregions_zip(), sources.ECOREGIONS_URL)
-        eco["ready"] = clipped_path().exists()
+        eco["ready"] = clipped_path(region).exists()
         osm_time = osm["downloaded"] if osm["exists"] else None
         tiles = []
         for d in sorted(CACHE.glob("*")) if CACHE.exists() else []:
@@ -527,7 +547,7 @@ class Api:
     def check_osm_update(self, region: str = "colombia") -> dict:
         from forest.fetch import sources
         try:
-            return {"ok": True, **sources.check_update(sources.osm_file(region), sources.OSM_URLS[region])}
+            return {"ok": True, **sources.check_update(sources.osm_file(region), sources.osm_url(region))}
         except OSError as exc:
             return {"ok": False, "error": f"Couldn't reach Geofabrik: {exc}"}
 
@@ -548,11 +568,14 @@ class Api:
                 return {"ok": False, "error": "Select some tiles on the map first."}
             args, rkind, label = ["fetch", "--tiles", ",".join(names), "--region", region], "data", "downloading data"
         elif kind == "osm":
-            names = [d.name for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists()] if CACHE.exists() else []
+            from forest import regions
+            reg = regions.get(region)
+            names = [d.name for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists()
+                     and _is_tile_in(d.name, reg)] if CACHE.exists() else []
             args = ["data", "osm", "--region", region, "--update"] + (["--force"] if force else [])
             rkind, label = "osm_update", "updating OSM data"
         elif kind == "ecoregions":
-            names, args, rkind, label = [], ["data", "ecoregions", "--update"], "data", "downloading ecoregions"
+            names, args, rkind, label = [], ["data", "ecoregions", "--region", region, "--update"], "data", "downloading ecoregions"
         else:
             return {"ok": False, "error": f"unknown data job '{kind}'"}
         j = self.job
@@ -666,12 +689,11 @@ class Api:
         j.add(f"=== {name}: {'ok' if rc == 0 else ('cancelled' if j.cancel else f'failed (exit {rc})')} ===")
 
     def _tile_result(self, name: str, region: str) -> dict:
-        from forest import history
         from forest.paths import dsf_path
         t = Tile.parse(name)
         st = self.get_stats(name, region) or {}
         out = {k: st.get(k) for k in ("forest_km2", "estimated_trees", "polygons", "budget_scale", "seconds")}
-        out["dsf_mb"] = round(history.dir_mb(dsf_path(region, t)), 2)
+        out["dsf_mb"] = round(fsutil.size_mb(dsf_path(region, t)), 2)
         return out
 
     def _run(self, names: list[str], profile: str, region: str, workers: int = 1) -> None:

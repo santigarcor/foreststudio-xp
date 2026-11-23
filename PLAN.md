@@ -140,18 +140,9 @@ forest-studio/
 
 ## 9. Phases and milestones
 
-**Phase 0: groundwork (proof of concept).**
-- Set up Earth Engine access and the Python project.
-- Catalog XP12's default `.for` library paths: read the library files in X-Plane's default scenery, and record each forest's tree types, sizes and spacing → `assets_xp12.yaml`.
-- Check how DSFTool's text format writes forest polygons and exclusion zones (convert an existing X-World tile to text and inspect it).
-- Seasons research (§7).
-- Choose the test tile: **+06-076**, which contains Medellín/Rionegro SKRG and covers Andes, cloud forest and plantations.
-- ✅ Done when one hand-picked polygon written by our code shows trees in the sim.
+**Phase 0: proof of concept — done 2026-11-20** (findings in §10).
 
-**Phase 1: one tile, end to end.**
-- Fetch → classify (WorldCover + Hansen + a simple biome rule table) → vectorize → DSF for +06-076.
-- Medium profile and default-forest exclusion.
-- ✅ Done when it flies, looks better than default/X-World, and the benchmark is recorded.
+**Phase 1: one tile, end to end — done 2026-11-20.**
 - **Implementation (2026-11-20):** `forest fetch --tile +06-076`, then `forest build --tile +06-076 --profile medium --install forest_poc`. Uses the `.venv` with numpy, shapely, rasterio, pyproj, scipy; all have Python 3.15 wheels.
   - Data, no login needed:
     - WorldCover 2021 10 m (only the 1° window, read as HTTP ranges)
@@ -172,18 +163,16 @@ forest-studio/
   - About 47 s to build, 5 s to compile, DSF about 13 MB.
   - Cut-out cells: roads 2.1M, buildings 0.46M, water 0.56M, airports 18k, rail/power 0.24M.
   - Speckle control: two 3×3 majority passes, density blur σ = 2 cells, minimum patch 3,000 m², simplification 12 m. Polygons went from 190k to 95k.
-  - Installed as `Custom Scenery/forest_poc/.../+06-076.dsf`, replacing the PoC squares. Next: in-sim check, then the FPS benchmark against X-World.
+  - Installed as `Custom Scenery/forest_poc/.../+06-076.dsf`, replacing the PoC squares.
 
-**Phase 2: quality.**
-- Add IDEAM, canopy height, Dynamic World, OSM plantations and mangroves.
-- Full Colombia class table: Amazon, Chocó, Andean, cloud forest, páramo, Caribbean dry forest, Llanos gallery forest, mangroves, plantations, urban.
-- Airport zones and edge falloff.
-- ✅ Done when the classes and heights match imagery on spot checks at SKBO, SKRG, SKCL, SKCG and SKLT.
+**Phase 2: quality — mostly done.** OSM plantations and mangroves, the Colombian biome table
+(rainforest, montane, dry forest, xeric, Llanos savanna, mangroves, páramo), airport clearances,
+scrub and town trees are in (§10 and the dated entries below). Left: spot checks against imagery at
+SKBO, SKCL and SKLT (SKRG and SKCG done). Not planned: IDEAM, Dynamic World; canopy height is not
+wanted (owner, 2026-11-21).
 
-**Phase 3: all of Colombia.**
-- Batch build of about 100 tiles, run in parallel, with caching and resume.
-- Performance profiles tuned using benchmarks.
-- One-command install.
+**Phase 3: all of Colombia — done.** Parallel builds with caching, profiles tuned by the owner's
+FPS checks (2026-11-23), one-click install as a linked pack. Resuming interrupted jobs is not wanted.
 
 **Phase 4: generalize.**
 - Region YAMLs for other countries, a global fallback rule table (WorldCover + ecoregions only), and seasonal experiments.
@@ -311,7 +300,7 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 ### Pack order and the X-World "orange city trees" (2026-11-20)
 - The orange trees between houses in Medellín came from **X-World `4-extras`**: 26,977 `random_tree` areas per tile, plus hedges/shrubs/mixed. Confirmed by an A/B test with 4-extras disabled. They did not come from Medellín City (landmark buildings only) or from our forest.
 - **New order:** `forest_poc` sits **above `simHeaven_X-World_America-4-extras`** (below 3-details). Our tile-wide `sim/exclude_for` now also hides X-World's random trees, hedges, shrubs and `6-scenery`'s `osm_tree` on our tiles. X-World buildings, roads, grass and cemeteries are unaffected; `7-forests` stays disabled.
-- Side effect: towns get almost no trees, because our build leaves built-up areas empty. **TODO:** add an optional "town trees" layer (scattered evergreen single trees in built-up areas and parks, with its own density setting).
+- Side effect: towns get almost no trees, because our build leaves built-up areas empty. Solved by the town-trees layer (2026-11-21).
 - `Tropical_Trees_Fix` is disabled. It was turned off between 13:00 and 15:13, outside Forest Studio's edits. Ini backups are in `cache/backups/`.
 
 ### Cut-out rules v2 (2026-11-20)
@@ -342,14 +331,6 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - Python package scaffold (stdlib-only so far): `forest catalog`, `forest poc [--compile] [--season spr|sum|fal|win]`, `forest decode [--label]`.
 - PoC overlay +06-076 compiled: `out/forest_poc/`. Three ~1 km patches about 1.5–2 km west of SKRG: broadleaf warm (SW), rainforest (SE), conifer warm (NW), each with its own `exclude_for`.
 - Season-raster writer exists (`forest poc --season win`) but is parked; see §7.
-
-### Still open
-1. **In-sim test: installed 2026-11-20.** `Custom Scenery/forest_poc/` (DSF only) sits below `simHeaven_X-World_America-8-network` and above `Tropical_Trees_Fix` and the Vegetation Library. `simHeaven_X-World_America-7-forests` is set to `SCENERY_PACK_DISABLED`. Backup of the original ini: `cache/backups/scenery_packs.ini.20261120-130043`. Check that the three patches render near SKRG. With the ortho tile, expect no other forests on +06-076.
-   - **Result, round 1:** the patches render. As expected for plain squares, trees cover roads, houses and open fields → needs the Phase 1 tree mask. `broadleaves/warm` looked wintery (season rasters, §7).
-   - **Round 2 (installed 13:10):** SW `broadleaves/very_hot`, SE `rainforest_vhot_rain`, NW `conifers/hot_dry`, all evergreen. To verify: no winter look.
-2. ~~Season test~~: deferred (no seasons for Colombia, see §7). Revisit in Phase 4 for seasonal regions.
-3. Python: the installed 3.15 is very new and may not have geospatial wheels (GDAL/rasterio) yet. Use a 3.12/3.13 venv for Phase 1.
-4. Earth Engine account + Cloud project for Phase 1.
 
 ## 11. Risks
 
@@ -461,3 +442,49 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - Cleanup: ruff in dev deps + CI, dead code removed, shared helpers, clear error for a forest type
   missing from the X-Plane library, job log kept open while running, cached job summaries and
   ecoregion names, devserver honours `PORT`.
+
+### 2026-11-23 — FPS result, OSM mangroves, DSFTool memory
+
+- **FPS (owner, frame limiter off):** about 100 fps with medium at 27M, and 90–100 fps at
+  `tile_tree_budget` 35M with `global_density` 0.75 over different cities. The shipped medium
+  profile is now **30M / 0.75** (was 27M / 0.7); the owner's own profile is unchanged (35M / 0.75).
+- **Missing mangroves at SKCG** (owner screenshots: the Juan Angola canal through Crespo, and the
+  wetland between the runway and the Ciénaga de la Virgen). Read-only check of +10-076 in a scratch
+  data folder:
+  - WorldCover calls most of these mangroves herbaceous wetland (90), grass (30) or water, so
+    they got no trees; OSM maps them as `natural=wetland` + `wetland=mangrove` (42 areas in the
+    tile, 2,097 / ~1,600 km² in Colombia), which the build did not read.
+  - Where WorldCover did see mangrove, Hansen's 2000 tree cover was ~5 %, so density
+    (0.6 WorldCover + 0.4 Hansen) stayed low: 79 % of the tree cells east of the runway were at the
+    thinnest level and half the mangrove cells got the sparse shrub type.
+  - Fix: OSM mangroves are extracted (`osm_pbf.VERSION` 5, Overpass query too) and count as
+    mangrove cells (mangrove biome, never cut by water); inside them grass, wetland and shrubland
+    count as half trees (`OSM_MANGROVE_LOW_VEG`) with the parks threshold, so channels, sand and
+    built-up stay open. Mangrove density comes from WorldCover alone. `BUILD_VERSION` 4.
+  - Result on +10-076: continuous mangrove fringe along the canal; east of the runway the dense
+    mangrove type went from 835 to 1,686 cells and tree cells from 3,105 to 3,505; whole tile
+    9.18 M → 9.32 M trees. Medellín (+06-076, no mangroves) rebuilt identical apart from metadata.
+- **DSFTool memory**, now measured on every build (`proc.run_measured`, history fields
+  `build_peak_gb`, `rss_at_compile_gb`, `dsftool_peak_gb`; `peak_gb` = the larger of the build's
+  own peak and what it still holds plus DSFTool's): Medellín 0.27 GB DSFTool + 0.40 GB held vs
+  3.73 GB build peak; Cartagena 0.10 GB. DSFTool never sets the limit for parallel builds.
+- Duplicated helpers merged into `forest/fsutil.py` (`size_bytes`, `size_mb`, `move_merge`);
+  `OverlayTile.name/folder` use `Tile`.
+
+### 2026-11-23 — Regions are data files (step 1 of multi-region)
+
+- Plan for other regions (owner asked before a public release): (1) a region becomes a data file,
+  (2) global default forest rules by RESOLVE biome so any region works without hand-tuning,
+  (3) evergreen-only as a region setting, (4) a first test region (a tropical neighbour, later a
+  temperate one for seasons), plus big OSM extracts (sub-region files) and border tiles.
+- Done now (1 and 3): `config/regions/colombia.toml` + `forest/regions.py`. The map tiles, the OSM
+  extract URL/file, the ecoregion cut-out box and file (`cache/ecoregions/<region>.geojson`), the
+  setup checks, the Data view and the OSM update (only the region's tiles are re-extracted) read
+  the region; `fetch_osm`, `ecoregion_raster`, `build_clip` take it. `evergreen_only` decides
+  whether saving rules and building accept seasonal types; the forest-type pickers offer seasonal
+  types only in regions that allow them. The region picker shows labels and the map fits the
+  region.
+- Verified: +10-076 rebuilt in a scratch folder before/after — DSF text, overlay and preview PNGs
+  byte-identical, stats equal except build time; the Colombia ecoregion cut-out remade from the zip
+  is byte-identical to the one made by the old code. The app (dev server) shows 288 tiles, 59
+  ecoregions, 5/5 setup checks.

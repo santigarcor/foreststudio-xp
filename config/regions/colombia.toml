@@ -1,0 +1,21 @@
+# A region: where ForestStudio builds, where its data comes from, and which rules it follows.
+# The region's name is this file's name; it also names the forest types file
+# (config/rules/<name>.toml) and the X-Plane pack (Custom Scenery/forest_<name>).
+
+label = "Colombia"
+
+# Tiles offered on the map: west, south, east, north in whole degrees (tile edges).
+# Colombia incl. San Andrés and Providencia.
+bounds = [-82, -5, -66, 13]
+
+# The box the world ecoregion map is cut to: west, south, east, north (optional; default = bounds
+# plus 1°). Kept as it was before regions existed, so the cut-out and every tile stay the same.
+ecoregion_bounds = [-83, -5, -66, 14]
+
+# OpenStreetMap extract (Geofabrik) that covers the bounds.
+osm_url = "https://download.geofabrik.de/south-america/colombia-latest.osm.pbf"
+
+# Only evergreen forest types (no seasonal variants). XP12's season rasters put the Andean
+# highlands (1,500-2,500 m, e.g. Rionegro) in "winter" for months, and Colombia has no
+# seasonal forests, so seasonal types would show bare trees.
+evergreen_only = true

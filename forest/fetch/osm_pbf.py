@@ -11,7 +11,7 @@ Writes cache/tiles/<tile>/osm.json in the same shape as Overpass `out geom`:
 
 Kinds of features:
 - no-tree cut-outs: roads, buildings, water, aeroways, rail, power lines;
-- tree hints: single trees, tree rows, woods/forests, parks, gardens, golf courses;
+- tree hints: single trees, tree rows, woods/forests, parks, gardens, golf courses, mangroves;
 - plantations: orchards, plantations, vineyards, farmland with a crop/trees tag.
 """
 
@@ -28,8 +28,7 @@ from forest import config
 from forest.tiles import Tile
 
 PBF_DIR = config.CACHE_ROOT / "osm"
-DEFAULT_PBF = PBF_DIR / "colombia-latest.osm.pbf"
-VERSION = 4  # bump when the set of extracted features changes (old caches are re-extracted)
+VERSION = 5  # 5: mangroves (natural=wetland + wetland=mangrove). Bump when the set of extracted features changes (old caches are re-extracted)
 
 _WATERWAY = re.compile(r"^(river|riverbank|canal)$")
 _AEROWAY = re.compile(r"^(aerodrome|runway|taxiway|apron|helipad)$")
@@ -48,6 +47,10 @@ def is_town_area(t) -> bool:
 
 def is_scrub_area(t) -> bool:
     return t.get("natural") in SCRUB_NATURAL
+
+
+def is_mangrove_area(t) -> bool:
+    return t.get("natural") == "wetland" and t.get("wetland") == "mangrove"
 
 
 def is_green_area(t) -> bool:
@@ -69,12 +72,14 @@ def wanted_way(t) -> bool:
         or bool(_AEROWAY.match(t.get("aeroway", "")))
         or t.get("railway") == "rail" or t.get("power") == "line"
         or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
+        or is_mangrove_area(t)
     )
 
 
 def wanted_area_relation(t) -> bool:
     return ("building" in t or t.get("natural") == "water" or t.get("aeroway") == "aerodrome"
-            or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t))
+            or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
+            or is_mangrove_area(t))
 
 
 class _TileWriter:
@@ -167,7 +172,7 @@ def is_current(tile: Tile) -> bool:
     return f'"version": {VERSION}' in head
 
 
-def extract_tiles(tiles: list[Tile], pbf: Path = DEFAULT_PBF, force: bool = False) -> dict[str, int]:
+def extract_tiles(tiles: list[Tile], pbf: Path, force: bool = False) -> dict[str, int]:
     """One pass over the .pbf for all tiles that need it. Returns element counts per tile."""
     todo = [t for t in tiles if force or not is_current(t)]
     if not todo:
@@ -190,6 +195,6 @@ def extract_tiles(tiles: list[Tile], pbf: Path = DEFAULT_PBF, force: bool = Fals
     return counts
 
 
-def extract_tile(tile: Tile, pbf: Path = DEFAULT_PBF) -> Path:
+def extract_tile(tile: Tile, pbf: Path) -> Path:
     extract_tiles([tile], pbf)
     return tile.cache / "osm.json"

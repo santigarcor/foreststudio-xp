@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from forest import config
+from forest import config, fsutil
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
@@ -55,15 +55,17 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     import time
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from forest import history
+    from forest import history, regions
     from forest.fetch.elevation import fetch_elevation
     from forest.fetch.osm import fetch_osm
-    from forest.fetch.osm_pbf import DEFAULT_PBF, extract_tiles
+    from forest.fetch.osm_pbf import extract_tiles
     from forest.fetch.rasters import fetch_all
     from forest.resources import DOWNLOAD_WORKERS
 
     tiles = _tiles(args)
-    _ensure_country_files(getattr(args, "region", "colombia"))
+    region = args.region
+    pbf = regions.get(region).osm_file
+    _ensure_country_files(region)
 
     def one(tile):
         had = (tile.cache_path / "worldcover.tif").exists()
@@ -71,9 +73,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         paths = fetch_all(tile)
         if not had:
             history.record("rasters", tile=tile.name, seconds=round(time.time() - t0, 1),
-                           mb=round(sum(history.dir_mb(p) for p in paths.values()), 1))
+                           mb=round(sum(fsutil.size_mb(p) for p in paths.values()), 1))
         fetch_elevation(tile)
-        return tile, sum(history.dir_mb(p) for p in paths.values())
+        return tile, sum(fsutil.size_mb(p) for p in paths.values())
 
     # Satellite windows download in parallel (network-bound).
     failed = []
@@ -88,12 +90,12 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 failed.append(t.name)
                 print(f"{t.name}: data download FAILED: {exc}", flush=True)
     # OpenStreetMap: one pass over the country file for every tile that needs it.
-    if DEFAULT_PBF.exists():
+    if pbf.exists():
         t0 = time.time()
-        counts = extract_tiles(tiles)
+        counts = extract_tiles(tiles, pbf)
         if counts:
             secs = round(time.time() - t0, 1)
-            mbs = [history.dir_mb(next(t for t in tiles if t.name == n).cache / "osm.json") for n in counts]
+            mbs = [fsutil.size_mb(next(t for t in tiles if t.name == n).cache / "osm.json") for n in counts]
             history.record("osm_pass", tiles=len(counts), seconds=secs,
                            mb_per_tile=round(sum(mbs) / len(mbs), 1))
             print(f"OSM: one pass for {len(counts)} tile(s) in {secs:.0f} s", flush=True)
@@ -101,7 +103,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print("OSM: already up to date", flush=True)
     else:
         for tile in tiles:
-            fetch_osm(tile)
+            fetch_osm(tile, region)
     if failed:
         print(f"data missing for: {', '.join(sorted(failed))}", flush=True)
         return 3
@@ -112,16 +114,16 @@ def _ensure_country_files(region: str) -> None:
     """First use: download the OSM country file and the ecoregions map if they're missing."""
     from forest.fetch import sources
 
-    pbf = sources.osm_file(region)
+    pbf, url = sources.osm_file(region), sources.osm_url(region)
     if not pbf.exists():
-        print(f"OSM country file missing: downloading {sources.OSM_URLS[region]}", flush=True)
+        print(f"OSM country file missing: downloading {url}", flush=True)
         try:
-            sources.download(sources.OSM_URLS[region], pbf, sources.print_progress("OSM"))
+            sources.download(url, pbf, sources.print_progress("OSM"))
         except OSError as exc:
             print(f"OSM country file download FAILED: {exc}", flush=True)
     zp = sources.ecoregions_zip()
     from forest.fetch.ecoregions import clipped_path
-    if not clipped_path().exists() and not zp.exists():
+    if not clipped_path(region).exists() and not zp.exists():
         print("ecoregions map missing: downloading", flush=True)
         try:
             sources.download(sources.ECOREGIONS_URL, zp, sources.print_progress("ecoregions"))
@@ -138,17 +140,21 @@ def cmd_data(args: argparse.Namespace) -> int:
     from forest.tiles import CACHE, Tile
 
     if args.what == "ecoregions":
-        from forest.fetch.ecoregions import build_clip, clipped_path
+        from forest.fetch.ecoregions import build_clip
         zp = sources.ecoregions_zip()
         if args.update or not zp.exists():
             sources.download(sources.ECOREGIONS_URL, zp, sources.print_progress("ecoregions"))
-            clipped_path().unlink(missing_ok=True)
-        build_clip()
+            for old in zp.parent.parent.glob("*.geojson"):   # every region's cut-out is from the old zip
+                old.unlink(missing_ok=True)
+        build_clip(args.region)
         print("ecoregions: ready", flush=True)
         return 0
 
+    from forest import regions
     from forest.fetch.osm_pbf import extract_tiles
-    url, pbf = sources.OSM_URLS[args.region], sources.osm_file(args.region)
+
+    region = regions.get(args.region)
+    url, pbf = region.osm_url, region.osm_file
     if args.update or not pbf.exists():
         if pbf.exists() and not args.force:
             chk = sources.check_update(pbf, url)
@@ -157,7 +163,9 @@ def cmd_data(args: argparse.Namespace) -> int:
                 return 0
         print(f"OSM country file: downloading {url}", flush=True)
         sources.download(url, pbf, sources.print_progress("OSM"))
-    tiles = [Tile.parse(d.name) for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists()]
+    # Tiles of this region that already have OSM data are re-extracted from the new file.
+    tiles = [t for t in (Tile.parse(d.name) for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists())
+             if region.contains(t)]
     if tiles:
         t0 = time.time()
         extract_tiles(tiles, pbf, force=True)
@@ -178,7 +186,9 @@ def cmd_build(args: argparse.Namespace) -> int:
     txt = build_tile(tile, profile=args.profile, region=args.region)
     if args.compile or args.install:
         dsf = dsf_path(args.region, tile)
-        rc = compile_dsf(txt, dsf)
+        rss_at_compile = _memory_gb("rss")   # what this process still holds while DSFTool runs
+        measured: dict = {}
+        rc = compile_dsf(txt, dsf, measured)
         if rc:
             return rc
         from forest.credits import write_pack_credits
@@ -187,16 +197,19 @@ def cmd_build(args: argparse.Namespace) -> int:
         if not args.keep_text:
             # ~130 MB per tile and regenerated by every build; the .dsf is what matters.
             txt.unlink(missing_ok=True)
-        extra = sum(history.dir_mb(studio_path(args.region, tile, s))
+        extra = sum(fsutil.size_mb(studio_path(args.region, tile, s))
                     for s in (".overlay.png", ".preview.png", ".stats.json"))
-        try:  # this process's peak memory (the heavy part; DSFTool runs after it is freed)
-            import psutil
-            mi = psutil.Process().memory_info()
-            peak_gb = round(getattr(mi, "peak_wset", mi.rss) / 1e9, 2)
-        except Exception:  # noqa: BLE001
-            peak_gb = None
+        # Peak of the whole build = the larger of this process's own peak (classify/vectorise) and
+        # what it still holds plus DSFTool's peak during the compile. Auto parallel builds use it.
+        build_peak = _memory_gb("peak")
+        dsftool_peak = measured.get("peak_gb")
+        peak_gb = build_peak
+        if build_peak is not None and rss_at_compile is not None and dsftool_peak is not None:
+            peak_gb = max(build_peak, rss_at_compile + dsftool_peak)
         history.record("build", tile=tile.name, seconds=round(time.time() - t0, 1),
-                       dsf_mb=round(history.dir_mb(dsf), 2), out_extra_mb=round(extra, 2), peak_gb=peak_gb)
+                       dsf_mb=round(fsutil.size_mb(dsf), 2), out_extra_mb=round(extra, 2),
+                       peak_gb=_round(peak_gb), build_peak_gb=_round(build_peak),
+                       rss_at_compile_gb=_round(rss_at_compile), dsftool_peak_gb=_round(dsftool_peak))
     if args.install:
         # The whole pack is linked into X-Plane as one folder; make sure the link exists.
         from forest import pack
@@ -204,9 +217,25 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def compile_dsf(txt: Path, dsf: Path | None = None) -> int:
+def _memory_gb(which: str) -> float | None:
+    """This process's current ("rss") or peak ("peak") memory in GB."""
+    try:
+        import psutil
+
+        mi = psutil.Process().memory_info()
+        return (getattr(mi, "peak_wset", mi.rss) if which == "peak" else mi.rss) / 1e9
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _round(v: float | None) -> float | None:
+    return None if v is None else round(v, 2)
+
+
+def compile_dsf(txt: Path, dsf: Path | None = None, measured: dict | None = None) -> int:
     """Compile DSF text to `dsf` (default: next to the text). Written to a temporary name and
-    swapped in atomically, so X-Plane never reads a half-written tile."""
+    swapped in atomically, so X-Plane never reads a half-written tile. With `measured`, DSFTool's
+    peak memory is stored there as "peak_gb"."""
     import os
 
     cfg = config.load()
@@ -214,7 +243,7 @@ def compile_dsf(txt: Path, dsf: Path | None = None) -> int:
     dsf.parent.mkdir(parents=True, exist_ok=True)
     tmp = dsf.with_name(dsf.stem + ".building.dsf")
     tmp.unlink(missing_ok=True)
-    rc = _run([str(cfg.dsftool), "--text2dsf", str(txt), str(tmp)])
+    rc = _run([str(cfg.dsftool), "--text2dsf", str(txt), str(tmp)], measured)
     if rc == 0:
         os.replace(tmp, dsf)
     else:
@@ -222,13 +251,16 @@ def compile_dsf(txt: Path, dsf: Path | None = None) -> int:
     return rc
 
 
-def _run(cmd: list[str]) -> int:
+def _run(cmd: list[str], measured: dict | None = None) -> int:
     if not Path(cmd[0]).exists():
         print(f"DSFTool not found at {cmd[0]} (it ships in tools/xptools/; reinstall ForestStudio)", file=sys.stderr)
         return 2
     from forest import proc
 
-    r = proc.run(cmd)  # hidden: never opens a console window
+    if measured is None:
+        r = proc.run(cmd)  # hidden: never opens a console window
+    else:
+        r, measured["peak_gb"] = proc.run_measured(cmd)
     for line in (r.stdout or "").splitlines() + (r.stderr or "").splitlines():
         if line.strip() and not line.startswith(("Scanning for", "Got dimension", "Got entire")):
             print(line, flush=True)
@@ -271,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("build", help="build the forest overlay for a tile")
     c.add_argument("--tile", required=True, help="e.g. +06-076")
     c.add_argument("--profile", default="medium", help="config/profiles/<name>.toml")
-    c.add_argument("--region", default="colombia", help="config/rules/<name>.toml")
+    c.add_argument("--region", default="colombia", help="config/regions/<name>.toml (+ rules/<name>.toml)")
     c.add_argument("--compile", action="store_true", help="run DSFTool --text2dsf")
     c.add_argument("--install", action="store_true",
                    help="also make sure the region's pack is linked into Custom Scenery")

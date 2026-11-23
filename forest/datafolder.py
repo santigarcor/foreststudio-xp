@@ -13,14 +13,9 @@ import shutil
 from pathlib import Path
 
 from forest import config
+from forest.fsutil import move_merge, size_bytes
 
 MARKERS = ("config", "cache", "out")   # a folder holding any of these is a ForestStudio data folder
-
-
-def _size(p: Path) -> int:
-    if not p.exists():
-        return 0
-    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file() and not f.is_symlink())
 
 
 def _is_data_folder(p: Path) -> bool:
@@ -84,7 +79,7 @@ def check(folder: str) -> dict:
         return {"ok": False, "error": f"Can't write to {parent}."}
 
     has_data = _is_data_folder(target)
-    size = _size(cur)
+    size = size_bytes(cur)
     try:
         free = shutil.disk_usage(parent).free
     except OSError:
@@ -150,23 +145,6 @@ def repoint_links(links: list[Path], new_out: Path) -> list[str]:
     return notes
 
 
-def _move(src: Path, dst: Path, notes: list[str]) -> None:
-    """Move without overwriting: folders are merged, items already in dst are kept."""
-    if not dst.exists():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
-        return
-    if src.is_dir() and dst.is_dir():
-        for child in sorted(src.iterdir()):
-            _move(child, dst / child.name, notes)
-        try:
-            src.rmdir()
-        except OSError:
-            pass
-        return
-    notes.append(f"kept {src} (the new folder already has {dst.name})")
-
-
 def change(folder: str) -> dict:
     """Move (or switch) to a new data folder. The app must restart afterwards."""
     c = check(folder)
@@ -182,7 +160,7 @@ def change(folder: str) -> dict:
         for item in sorted(cur.iterdir()) if cur.exists() else []:
             if item.resolve() == config.LOCATION_FILE.resolve():
                 continue                      # the pointer stays in the default folder
-            _move(item, target / item.name, notes)
+            move_merge(item, target / item.name, notes)
         notes.insert(0, f"moved {c['size_gb']} GB to {target}")
         if cur != config.DEFAULT_DATA_ROOT:
             try:

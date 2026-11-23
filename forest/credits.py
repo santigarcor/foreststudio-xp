@@ -10,7 +10,7 @@ from pathlib import Path
 CREDITS_FILE = "CREDITS.txt"
 
 DATA = [
-    {"name": "OpenStreetMap", "use": "roads, buildings, water, airports, parks, single trees, plantations",
+    {"name": "OpenStreetMap", "use": "roads, buildings, water, airports, parks, single trees, plantations, mangroves",
      "license": "Open Database License (ODbL) 1.0",
      "attribution": "© OpenStreetMap contributors",
      "url": "https://www.openstreetmap.org/copyright",

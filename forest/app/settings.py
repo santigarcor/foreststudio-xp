@@ -140,10 +140,6 @@ def list_profiles() -> list[str]:
     return sorted(p.stem for p in profiles_dir().glob("*.toml"))
 
 
-def list_regions() -> list[str]:
-    return sorted(p.stem for p in rules_dir().glob("*.toml"))
-
-
 def read_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 

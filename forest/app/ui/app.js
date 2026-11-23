@@ -29,7 +29,8 @@ let map, baseLayers, logSeq = 0, polling = null;
 
 /* ---------------- map ---------------- */
 function initMap() {
-  map = L.map("map", { zoomSnap: 0.5, worldCopyJump: false }).setView([6.3, -74.5], 6);
+  map = L.map("map", { zoomSnap: 0.5, worldCopyJump: false });
+  fitRegion();
   // Forest overlays above tile fills, never catching clicks.
   map.createPane("forest");
   map.getPane("forest").style.zIndex = 450;
@@ -49,6 +50,25 @@ function initMap() {
   map.on("zoomend", () => { updateLabels(); Object.keys(rects).forEach(n => rects[n].setStyle(tileStyle(n))); });
   $("#showOverlay").onchange = () => { refreshOverlays(); renderForestLegend(); };
   $("#overlayOpacity").oninput = () => Object.values(overlays).forEach(o => o.setOpacity(+$("#overlayOpacity").value));
+}
+
+/* The selected region: its info from get_state, and the forest types it may use. */
+const region = () => $("#region").value || S.default_region;
+const regionInfo = () => S.region_info[region()] || {};
+const mainAssets = () => (regionInfo().evergreen_only === false ? S.forests : S.evergreen);
+const allAssets = () => (regionInfo().evergreen_only === false ? S.forests_all : S.evergreen_all);
+
+function fitRegion() {
+  const [w, s, e, n] = regionInfo().bounds || [-82, -5, -66, 13];
+  map.fitBounds([[s, w], [n, e]]);
+}
+
+/* Switching region: forget the old region's tiles, selection and overlays. */
+function clearTiles() {
+  for (const n of Object.keys(rects)) { map.removeLayer(rects[n]); delete rects[n]; }
+  for (const n of Object.keys(labels)) { map.removeLayer(labels[n]); delete labels[n]; }
+  for (const n of Object.keys(overlays)) reloadOverlay(n);
+  selected.clear(); lastClicked = null;
 }
 
 function tileStyle(name) {
@@ -391,7 +411,7 @@ async function loadRules() {
 
 const COST_MARK = { high: "⚡⚡", medium: "⚡", low: "·" };
 const COST_WORD = { high: "heavy", medium: "medium", low: "light" };
-function assetSelect(value, onchange, list = S.evergreen, allowNone = false) {
+function assetSelect(value, onchange, list = mainAssets(), allowNone = false) {
   const s = el("select");
   if (allowNone) s.append(el("option", { value: "" }, typeof allowNone === "string" ? allowNone : "—  No trees (crop without trees)"));
   // Lightest first, so cheaper choices are at the top of the list.
@@ -471,7 +491,7 @@ function renderPlantations() {
     const note = el("div", { class: "sp" }, pr.asset ? assetNote(pr.asset) : "No trees are planted here.");
     const lab = el("div", { class: "lab" }, "Trees", pr.asset ? costBadge(pr.asset) : "");
     const sel = assetSelect(pr.asset || "", v => { pr.asset = v; note.textContent = v ? assetNote(v) : "No trees are planted here.";
-      lab.replaceChildren("Trees", v ? costBadge(v) : ""); }, S.evergreen_all, true);
+      lab.replaceChildren("Trees", v ? costBadge(v) : ""); }, allAssets(), true);
     const dens = el("input", { type: "range", min: 0, max: 1, step: 0.05, value: pr.density ?? 0.7 });
     const dOut = el("output", {}, String(pr.density ?? 0.7));
     dens.oninput = () => { pr.density = +dens.value; dOut.textContent = dens.value; };
@@ -512,14 +532,14 @@ function renderRules() {
     const scNote = el("div", { class: "sp" }, bm.scrub ? assetNote(bm.scrub) : "No scrub in this biome.");
     const scLab = el("div", { class: "lab" }, "Scrub (bushes on open bushland)", bm.scrub ? costBadge(bm.scrub) : "");
     const scSel = assetSelect(bm.scrub || "", v => { bm.scrub = v; scNote.textContent = v ? assetNote(v) : "No scrub in this biome.";
-      scLab.replaceChildren("Scrub (bushes on open bushland)", v ? costBadge(v) : ""); }, S.evergreen_all, "—  No scrub");
+      scLab.replaceChildren("Scrub (bushes on open bushland)", v ? costBadge(v) : ""); }, allAssets(), "—  No scrub");
     const bare = el("input", { type: "checkbox" }); bare.checked = !!bm.scrub_on_bare;
     bare.onchange = () => { bm.scrub_on_bare = bare.checked; };
     const twNote = el("div", { class: "sp" }, bm.town_tree ? assetNote(bm.town_tree) : "Uses the general town tree type above.");
     const twLab = el("div", { class: "lab" }, "Town trees", bm.town_tree ? costBadge(bm.town_tree) : "");
     const twSel = assetSelect(bm.town_tree || "", v => { bm.town_tree = v;
       twNote.textContent = v ? assetNote(v) : "Uses the general town tree type above.";
-      twLab.replaceChildren("Town trees", v ? costBadge(v) : ""); }, S.evergreen_all, "—  Same as the general town tree type");
+      twLab.replaceChildren("Town trees", v ? costBadge(v) : ""); }, allAssets(), "—  Same as the general town tree type");
     box.append(el("h3", {}, `Scrub & town trees — ${bm.name}`), el("div", { class: "band" },
       scLab, scSel, scNote,
       el("label", { class: "chk", title: "For deserts and dry coasts: the satellite map calls much of La Guajira bare or sparse ground." },
@@ -610,9 +630,9 @@ async function poll() {
 
 /* ---------------- misc ---------------- */
 function msg(sel, text, err = false) { const m = $(sel); m.textContent = text; m.className = "msg " + (err ? "err" : "ok"); }
-async function fillSelect(sel, items, value) {
+async function fillSelect(sel, items, value, label = (i) => i) {
   const s = $(sel); s.innerHTML = "";
-  for (const i of items) s.append(el("option", { value: i }, i));
+  for (const i of items) s.append(el("option", { value: i }, label(i)));
   if (value && items.includes(value)) s.value = value;
 }
 function showTab(name) {
@@ -638,7 +658,7 @@ async function init() {
   S = await api().get_state();
   badges();
   await fillSelect("#profile", S.profiles, "medium");
-  await fillSelect("#region", S.regions, "colombia");
+  await fillSelect("#region", S.regions, S.default_region, (n) => (S.region_info[n] || {}).label || n);
   initMap();
   await Promise.all([loadProfile(), loadRules()]);
   await refreshStatus();
@@ -650,7 +670,11 @@ async function init() {
     await loadProfile();
     await refreshStatus();
   };
-  $("#region").onchange = async () => { await loadRules(); Object.keys(overlays).forEach(reloadOverlay); await refreshStatus(); };
+  $("#region").onchange = async () => {
+    clearTiles(); fitRegion(); renderSelection();
+    S.ecoregions = await api().ecoregion_names(region());
+    await loadRules(); await refreshStatus();
+  };
   $("#packInstall").onclick = async () => {
     const r = await api().install_pack($("#region").value);
     msg("#packMsg", r.message, !r.ok); await refreshStatus(); updateEstimate();
@@ -688,7 +712,7 @@ async function init() {
     rules.plantation ||= [];
     rules.plantation.splice(Math.max(0, rules.plantation.length - 1), 0,
       { name: `plantation_${rules.plantation.length + 1}`, label: "New plantation", color: [230, 120, 40],
-        match: ["trees=example_trees"], asset: S.evergreen_all[0], density: 0.7 });
+        match: ["trees=example_trees"], asset: allAssets()[0], density: 0.7 });
     renderRules();
   };
   $("#addBand").onclick = () => {

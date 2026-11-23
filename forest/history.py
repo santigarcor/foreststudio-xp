@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import statistics
 import time
-from pathlib import Path
 
 from forest import config
 
@@ -18,7 +17,7 @@ HISTORY = config.CACHE_ROOT / "history.jsonl"
 # Used until real measurements exist (from the first test tiles).
 DEFAULTS = {
     "rasters_s": 35.0,     # download WorldCover + Hansen windows for one tile
-    "osm_pass_s": 140.0,   # one pass over the Colombia .pbf (any number of tiles)
+    "osm_pass_s": 140.0,   # one pass over a region's .pbf (any number of tiles; measured on Colombia)
     "build_s": 50.0,       # classify + vectorise + write + compile one tile
     "raster_mb": 18.0,     # cached rasters per tile
     "osm_mb": 40.0,        # cached osm.json per tile (cities far more, jungle far less)
@@ -64,10 +63,3 @@ def averages() -> dict[str, float]:
     avg["samples"] = len(ev)
     return avg
 
-
-def dir_mb(path: Path) -> float:
-    if not path.exists():
-        return 0.0
-    if path.is_file():
-        return path.stat().st_size / 1e6
-    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) / 1e6

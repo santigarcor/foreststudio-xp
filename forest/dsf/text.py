@@ -15,6 +15,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from forest.tiles import Tile
+
 Ring = list[tuple[float, float]]  # (lon, lat)
 
 FILL_SOLID, FILL_LINE, FILL_POINTS = 0, 256, 512
@@ -85,11 +87,11 @@ class OverlayTile:
 
     @property
     def name(self) -> str:
-        return f"{self.lat:+03d}{self.lon:+04d}"
+        return Tile(self.lat, self.lon).name
 
     @property
     def folder(self) -> str:
-        return f"{self.lat // 10 * 10:+03d}{self.lon // 10 * 10:+04d}"
+        return Tile(self.lat, self.lon).folder
 
     def to_text(self, raster_dir: Path | None = None) -> str:
         return "".join(line + "\n" for line in self.lines(raster_dir))

@@ -1,8 +1,9 @@
 """RESOLVE Ecoregions 2017 (Dinerstein et al.), clipped to the region we build.
 
 Source: https://storage.googleapis.com/teow2016/Ecoregions2017.zip (CC-BY 4.0).
-The global shapefile is read once and the ecoregions inside REGION_BOUNDS are saved
-(simplified) to cache/ecoregions/<region>.geojson, which tile builds rasterise.
+The global shapefile is read once per region and the ecoregions inside the region's box
+(`Region.clip_bounds`) are saved (simplified) to cache/ecoregions/<region>.geojson, which tile
+builds rasterise.
 """
 
 from __future__ import annotations
@@ -18,24 +19,26 @@ from forest import config
 
 ECO_DIR = config.CACHE_ROOT / "ecoregions"
 ZIP = ECO_DIR / "raw" / "Ecoregions2017.zip"
-REGION_BOUNDS = (-83.0, -5.0, -66.0, 14.0)  # Colombia incl. San Andrés, plus margin
 SIMPLIFY_DEG = 0.002  # ≈ 200 m, far finer than the source accuracy
 
 
-def clipped_path() -> Path:
-    return ECO_DIR / "colombia.geojson"
+def clipped_path(region: str) -> Path:
+    return ECO_DIR / f"{region}.geojson"
 
 
-def build_clip() -> Path:
+def build_clip(region: str) -> Path:
     import shapefile  # pyshp
     from shapely.geometry import box, mapping, shape
 
-    out = clipped_path()
+    from forest import regions
+
+    out = clipped_path(region)
     if out.exists():
         return out
     if not ZIP.exists():
         raise FileNotFoundError(f"ecoregions zip not found: {ZIP}")
-    region = box(*REGION_BOUNDS)
+    bounds = regions.get(region).clip_bounds
+    area = box(*bounds)
     with zipfile.ZipFile(ZIP) as z:
         shp = io.BytesIO(z.read("Ecoregions2017.shp"))
         dbf = io.BytesIO(z.read("Ecoregions2017.dbf"))
@@ -45,13 +48,13 @@ def build_clip() -> Path:
     feats = []
     for sr in r.iterShapeRecords():
         x0, y0, x1, y1 = sr.shape.bbox
-        if x1 < REGION_BOUNDS[0] or x0 > REGION_BOUNDS[2] or y1 < REGION_BOUNDS[1] or y0 > REGION_BOUNDS[3]:
+        if x1 < bounds[0] or x0 > bounds[2] or y1 < bounds[1] or y0 > bounds[3]:
             continue
         rec = dict(zip(fields, sr.record))
         g = shape(sr.shape.__geo_interface__)
         if not g.is_valid:
             g = g.buffer(0)
-        g = g.intersection(region).simplify(SIMPLIFY_DEG, preserve_topology=True)
+        g = g.intersection(area).simplify(SIMPLIFY_DEG, preserve_topology=True)
         if g.is_empty:
             continue
         feats.append({"type": "Feature", "geometry": mapping(g), "properties": {
@@ -65,31 +68,31 @@ def build_clip() -> Path:
 
 # The clipped GeoJSON, parsed once per file version: the app asks for the ecoregion names
 # on every get_state (each build process still reads it once).
-_features: tuple[tuple, list[dict]] | None = None
+_features: dict[str, tuple[tuple, list[dict]]] = {}
 
 
-def load_features() -> list[dict]:
-    global _features
-    path = build_clip()
+def load_features(region: str) -> list[dict]:
+    path = build_clip(region)
     st = path.stat()
     key = (str(path), st.st_mtime_ns, st.st_size)
-    if _features is None or _features[0] != key:
-        _features = (key, json.loads(path.read_text(encoding="utf-8"))["features"])
-    return _features[1]
+    hit = _features.get(region)
+    if hit is None or hit[0] != key:
+        hit = _features[region] = (key, json.loads(path.read_text(encoding="utf-8"))["features"])
+    return hit[1]
 
 
-def ecoregion_names() -> list[str]:
-    return sorted({f["properties"]["eco_name"] for f in load_features()})
+def ecoregion_names(region: str) -> list[str]:
+    return sorted({f["properties"]["eco_name"] for f in load_features(region)})
 
 
-def ecoregion_raster(tile, grid) -> tuple[np.ndarray, dict[int, str]]:
+def ecoregion_raster(tile, grid, region: str) -> tuple[np.ndarray, dict[int, str]]:
     """ECO_ID per grid cell (0 = none) and an id → name map for this tile."""
     from rasterio.features import rasterize
     from shapely.geometry import box, shape
 
     tb = box(*tile.bounds)
     shapes_, names = [], {}
-    for f in load_features():
+    for f in load_features(region):
         g = shape(f["geometry"])
         if not g.intersects(tb):
             continue

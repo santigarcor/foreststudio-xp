@@ -36,7 +36,17 @@ from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, O
 from forest.exclusions import coverage_mask, exclusion_mask, load_osm, osm_geometries, osm_tree_hints
 from forest.fetch.elevation import elevation_on_grid
 from forest.fetch.osm import fetch_osm
-from forest.fetch.rasters import WC_BARE, WC_BUILT, WC_MANGROVE, WC_SHRUB, WC_TREE, fetch_all, read_on_grid
+from forest.fetch.rasters import (
+    WC_BARE,
+    WC_BUILT,
+    WC_GRASS,
+    WC_MANGROVE,
+    WC_SHRUB,
+    WC_TREE,
+    WC_WETLAND,
+    fetch_all,
+    read_on_grid,
+)
 from forest.tiles import Grid, Tile
 
 
@@ -48,12 +58,14 @@ def _toml(path: Path) -> dict:
 class Settings:
     profile: dict
     rules: dict
+    region: str = "colombia"   # not in the fingerprint: the stats record the region separately
 
     @classmethod
     def load(cls, profile: str, region: str) -> "Settings":
         return cls(
             profile={**PROFILE_DEFAULTS, **_toml(config.profile_path(profile))},
             rules=fill_rule_defaults(_toml(config.rules_path(region)), region),
+            region=region,
         )
 
 
@@ -61,6 +73,8 @@ class Settings:
 # setting; a hand-set `mangrove_min_frac` in a profile still wins. Kept out of PROFILE_DEFAULTS
 # on purpose: that would change every tile's settings fingerprint and mark them all outdated.
 MANGROVE_MIN_FRAC = 0.3
+# Inside OSM-mapped mangroves, grass, herbaceous wetland and shrubland count this much as trees.
+OSM_MANGROVE_LOW_VEG = 0.5
 
 # Profile keys added after the first release: older profile files build as if they had these.
 PROFILE_DEFAULTS = {
@@ -161,11 +175,11 @@ def rule_biomes(rules: dict) -> list[dict]:
     return others + default[:1]
 
 
-def biome_raster(tile: Tile, grid: Grid, biomes: list[dict]) -> np.ndarray:
+def biome_raster(tile: Tile, grid: Grid, biomes: list[dict], region: str) -> np.ndarray:
     """Index into `biomes` per grid cell (unmapped ecoregions → default, the last)."""
     from forest.fetch.ecoregions import ecoregion_raster
 
-    eco, names = ecoregion_raster(tile, grid)
+    eco, names = ecoregion_raster(tile, grid, region)
     by_name = {e: i for i, b in enumerate(biomes) for e in b.get("ecoregions", [])}
     lut = np.full(int(eco.max()) + 1 if eco.size else 1, len(biomes) - 1, dtype=np.uint8)
     for eco_id, name in names.items():
@@ -187,20 +201,34 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         shrub_frac = _class_share(wc, src, grid, (WC_SHRUB,))
         bare_frac = _class_share(wc, src, grid, (WC_BARE,))
         built_frac = _class_share(wc, src, grid, (WC_BUILT,))
+        # Grass and herbaceous wetland (+ shrubland below): inside OSM mangroves they count as half trees.
+        low_veg_frac = _class_share(wc, src, grid, (WC_GRASS, WC_WETLAND))
         del wc
-    # Cells WorldCover calls mangrove get the mangrove biome and are not cut by water.
-    mangrove = mangrove_frac >= p.get("mangrove_min_frac", MANGROVE_MIN_FRAC)
     tc = read_on_grid(paths["treecover2000"], grid, Resampling.bilinear) / 100.0
     loss = read_on_grid(paths["lossyear"], grid, Resampling.nearest)
-    _log(f"rasters on grid (mangrove cells: {int(mangrove.sum()):,})", t0)
 
     lat_mid = tile.lat + 0.5
     # osm.json is parsed once for cut-outs and tree hints, and freed before the heavy rasterising
     # (a city tile's parsed JSON is over a GB of Python objects).
-    osm = load_osm(fetch_osm(tile))
+    osm = load_osm(fetch_osm(tile, s.region))
     geoms = osm_geometries(osm, lat_mid, p)
     hints = osm_tree_hints(osm)
     del osm
+
+    # Mangroves: cells WorldCover calls mangrove, plus OSM-mapped mangroves (natural=wetland +
+    # wetland=mangrove). They get the mangrove biome and are not cut by water. WorldCover often
+    # calls low or young mangrove "herbaceous wetland" or "grass" (SKCG: the mangroves between the
+    # runway and the Ciénaga de la Virgen, the Juan Angola canal banks), so inside OSM mangroves
+    # those count as half trees; open water, sand and built-up still get none.
+    osm_mangrove = coverage_mask(hints["mangrove"], grid, 0.5)
+    if osm_mangrove.any():
+        frac = np.where(osm_mangrove, np.minimum(frac + OSM_MANGROVE_LOW_VEG * (low_veg_frac + shrub_frac), 1.0),
+                        frac).astype(np.float32)
+    del low_veg_frac
+    mangrove = (mangrove_frac >= p.get("mangrove_min_frac", MANGROVE_MIN_FRAC)) | osm_mangrove
+    del mangrove_frac
+    _log(f"rasters on grid (mangrove cells: {int(mangrove.sum()):,}, "
+         f"OSM mangroves: {len(hints['mangrove'])} areas)", t0)
     min_cover = p.get("cutout_min_cover", 0.5)
     excl, excl_stats = exclusion_mask({k: v for k, v in geoms.items() if k != "water"}, grid, min_cover)
     water = coverage_mask(geoms["water"], grid, min_cover)
@@ -219,7 +247,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
 
     # Parks, gardens, golf courses and OSM woods: accept trees at a lower satellite share,
     # because 10 m land cover misses tree lines and scattered trees there.
-    threshold = np.where(green, p.get("osm_green_min_frac", p["min_tree_frac"]), p["min_tree_frac"])
+    threshold = np.where(green | osm_mangrove, p.get("osm_green_min_frac", p["min_tree_frac"]), p["min_tree_frac"])
     raw = (frac >= threshold) & ~(loss >= p["recent_loss_from"])
     unsmoothed = raw
     # Majority filter: removes isolated cells and pinholes → far fewer tiny polygons.
@@ -228,6 +256,10 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     raw |= unsmoothed & mangrove  # keep narrow mangrove fringes along shores
     trees = raw & ~excl  # cut-outs applied after smoothing so roads stay open
     density = np.clip(0.6 * frac + 0.4 * tc, 0.0, 1.0)
+    # Hansen's 2000 tree cover misses most Caribbean mangroves (≈5 % on SKCG's), which made them
+    # thin and gave them the sparse shrub type: their thickness comes from WorldCover alone.
+    density[mangrove] = frac[mangrove]
+    del osm_mangrove
     if p.get("density_blur_cells"):
         density = gaussian_filter(density, sigma=p["density_blur_cells"])
     # Full-tile arrays add up (a 6000² float64 is 288 MB): free each one once it's used.
@@ -236,7 +268,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     # Biome per cell from the ecoregion map, then asset from that biome's elevation band
     # and dense/sparse.
     biomes = rule_biomes(s.rules)
-    biome_idx = biome_raster(tile, grid, biomes)
+    biome_idx = biome_raster(tile, grid, biomes, s.region)
     mg = next((i for i, b in enumerate(biomes) if b["name"] == "mangrove"), None)
     if mg is not None:
         biome_idx[mangrove] = mg  # WorldCover's 10 m mangrove class beats the coarse ecoregion map
@@ -576,9 +608,11 @@ def budget(polys: list[ForestPolygon], tile: Tile, s: Settings) -> dict:
     if missing:
         raise ValueError(f"forest type(s) not in this X-Plane's forest library: {missing}. "
                          "Pick another type in Forest types, or rebuild the catalog (Settings).")
+    from forest import regions
+
     seasonal = [p.asset for p in polys if cat[p.asset]["seasons"]]
-    if seasonal:
-        raise ValueError(f"seasonal assets not allowed: {sorted(set(seasonal))}")
+    if seasonal and regions.get(s.region).evergreen_only:
+        raise ValueError(f"seasonal assets not allowed in region {s.region}: {sorted(set(seasonal))}")
     lat_mid = tile.lat + 0.5
     deg2_km2 = km2_per_deg2(tile.lat)
 
@@ -718,7 +752,8 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 3  # 2: scrub and town trees; 3: none of them inside airport grounds
+BUILD_VERSION = 4  # 2: scrub and town trees; 3: none of them inside airport grounds;
+# 4: OSM mangroves, mangrove thickness from WorldCover only
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json")
 
 

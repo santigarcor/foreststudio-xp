@@ -17,14 +17,18 @@ from typing import Callable
 USER_AGENT = "ForestStudio-XP (X-Plane scenery generator)"
 CHUNK = 1 << 20
 
-# Country extract per region (only Colombia for now).
-OSM_URLS = {"colombia": "https://download.geofabrik.de/south-america/colombia-latest.osm.pbf"}
+# Each region's OSM extract is set in its region file (config/regions/<name>.toml).
 ECOREGIONS_URL = "https://storage.googleapis.com/teow2016/Ecoregions2017.zip"
 
 
-def osm_file(region: str = "colombia") -> Path:
-    from forest.fetch import osm_pbf
-    return osm_pbf.PBF_DIR / Path(OSM_URLS[region]).name
+def osm_url(region: str) -> str:
+    from forest import regions
+    return regions.get(region).osm_url
+
+
+def osm_file(region: str) -> Path:
+    from forest import regions
+    return regions.get(region).osm_file
 
 
 def ecoregions_zip() -> Path:

@@ -180,7 +180,7 @@ const fmtWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: "m
 let dataChecked = new Set();
 
 async function startDataJob(kind, tiles, force) {
-  const r = await api().start_data_job(kind, tiles || [], $("#region").value || "colombia", !!force);
+  const r = await api().start_data_job(kind, tiles || [], $("#region").value || S.default_region, !!force);
   if (!r.ok) { msg("#dataMsg2", r.error, true); return r; }
   window._buildTotal = Math.max(1, r.tiles);
   if (typeof setRunning === "function") setRunning(true);
@@ -201,7 +201,7 @@ async function waitForDataJob() {   // refresh this page when the download finis
 }
 
 async function refreshData() {
-  const d = await api().data_status($("#region").value || "colombia");
+  const d = await api().data_status($("#region").value || S.default_region);
   const busyNow = d.busy;
   // OpenStreetMap card
   const o = d.osm, oc = $("#dcOsm"); oc.innerHTML = "";
@@ -215,7 +215,7 @@ async function refreshData() {
     const res = el("div", { class: "hint" });
     chk.disabled = upd.disabled = busyNow;
     chk.onclick = () => busy(chk, "Checking…", async () => {
-      const r = await api().check_osm_update($("#region").value || "colombia");
+      const r = await api().check_osm_update($("#region").value || S.default_region);
       if (!r.ok) { res.className = "hint err"; res.textContent = r.error; return; }
       res.className = "hint";
       if (r.newer) {
@@ -243,8 +243,8 @@ async function refreshData() {
   ec.append(el("h3", {}, "Ecoregions (biomes)"));
   ec.append(el("p", { class: "hint" }, "RESOLVE Ecoregions 2017: decides which forest type (rainforest, montane, dry forest…) grows where."));
   if (e.exists || e.ready) {
-    ec.append(el("div", {}, e.exists ? `${fmtMB(e.mb)} · downloaded ${fmtDay(e.downloaded)}${e.ready ? "" : " · the Colombia cut-out is made on the next build"}`
-      : "Colombia cut-out ready"));
+    ec.append(el("div", {}, e.exists ? `${fmtMB(e.mb)} · downloaded ${fmtDay(e.downloaded)}${e.ready ? "" : ` · the ${S.region_info[$("#region").value || S.default_region].label} cut-out is made on the next build`}`
+      : `${S.region_info[$("#region").value || S.default_region].label} cut-out ready`));
   } else {
     ec.append(el("div", { class: "hint err" }, "Not downloaded yet (about 150 MB). It's downloaded automatically on the first build."));
     const dl = el("button", { class: "primary" }, "Download now");
@@ -462,7 +462,7 @@ async function initViews() {
     if (!confirm(`Delete the downloaded data of ${tiles.length} tile(s)?\n\nBuilt tiles stay in X-Plane. `
       + "The data is downloaded again automatically if you rebuild them.")) return;
     await busy($("#dataDelete"), "Deleting…", async () => {
-      const r = await api().delete_tiles(tiles, ["cache"], $("#region").value || "colombia", "");
+      const r = await api().delete_tiles(tiles, ["cache"], $("#region").value || S.default_region, "");
       msg("#dataMsg2", r.ok === false ? r.error : `Deleted data of ${tiles.length} tile(s).`, r.ok === false);
       dataChecked.clear(); await refreshData(); refreshStatus(); refreshStatusbarDisk();
     });

@@ -162,16 +162,27 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
 def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
     """Real trees mapped in OSM: green areas (parks, gardens, golf, woods, forests),
     single trees (points), tree rows (lines), plantations; plus the areas that steer town trees
-    (residential vs industrial/commercial land) and scrub (natural=scrub/heath)."""
-    from forest.fetch.osm_pbf import NO_TOWN_TREE_LANDUSE, TOWN_LANDUSE, is_green_area, is_plantation, is_scrub_area
+    (residential vs industrial/commercial land), scrub (natural=scrub/heath) and mangroves
+    (natural=wetland + wetland=mangrove)."""
+    from forest.fetch.osm_pbf import (
+        NO_TOWN_TREE_LANDUSE,
+        TOWN_LANDUSE,
+        is_green_area,
+        is_mangrove_area,
+        is_plantation,
+        is_scrub_area,
+    )
 
     data = load_osm(osm_json)
     out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": [],
-                            "residential": [], "no_town_trees": [], "scrub": [], "airports": []}
+                            "residential": [], "no_town_trees": [], "scrub": [], "airports": [], "mangrove": []}
 
     def areas(tags: dict, polys: list) -> None:
         if tags.get("aeroway") == "aerodrome":   # airport grounds: never town trees or scrub
             out["airports"] += [p for p in polys if p.is_valid]
+            return
+        if is_mangrove_area(tags):
+            out["mangrove"] += [p for p in polys if p.is_valid]
             return
         lu = tags.get("landuse")
         key = ("residential" if lu in TOWN_LANDUSE else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE

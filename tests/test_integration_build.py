@@ -84,7 +84,7 @@ def built_tile(sandbox, monkeypatch, real_rules):
         {"type": "Feature", "properties": {"eco_id": 2, "eco_name": "Northwest Andean montane forests"},
          "geometry": {"type": "Polygon", "coordinates": [[[-75.5, 6], [-75, 6], [-75, 7], [-75.5, 7], [-75.5, 6]]]}},
     ]
-    monkeypatch.setattr(eco, "load_features", lambda: feats)
+    monkeypatch.setattr(eco, "load_features", lambda region: feats)
     cat = {"forests": fake_catalog_entries(rules_assets(real_rules))}
     monkeypatch.setattr(build, "load_catalog", lambda *a, **k: cat)
     txt = build.build_tile(TILE, profile="test", region="colombia")
@@ -133,7 +133,7 @@ def test_build_refuses_seasonal_assets(sandbox, monkeypatch, real_rules):
     prof = tomllib.loads((ROOT / "config" / "profiles" / "medium.toml").read_text(encoding="utf-8"))
     prof.update(grid_cells=300, chunks_per_degree=2)
     _write_profile(sandbox, prof)
-    monkeypatch.setattr(eco, "load_features", lambda: [])
+    monkeypatch.setattr(eco, "load_features", lambda region: [])
     assets = rules_assets(real_rules)
     cat = {"forests": fake_catalog_entries(assets, seasonal=assets)}   # pretend all are seasonal
     monkeypatch.setattr(build, "load_catalog", lambda *a, **k: cat)

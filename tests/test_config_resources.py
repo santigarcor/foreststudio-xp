@@ -123,3 +123,15 @@ def test_terminate_tree_stops_children(tmp_path):
             alive = False
     assert not alive
     parent.stdout.close()
+
+
+def test_run_measured_reports_child_peak_memory():
+    """DSFTool's peak memory is read from the finished process (Auto parallel builds use it)."""
+    from forest import proc
+
+    code = "b = bytearray(300_000_000); b[::4096] = b'x' * len(b[::4096]); print('ok')"
+    # the base interpreter: a venv's python.exe on Windows is a launcher that runs it as a child
+    exe = getattr(sys, "_base_executable", None) or sys.executable
+    r, peak = proc.run_measured([exe, "-c", code])
+    assert r.returncode == 0 and r.stdout.strip() == "ok"
+    assert peak is not None and peak >= 0.29

@@ -21,7 +21,8 @@ file is the authoritative summary; keep both up to date when something important
 3. **Colombia uses evergreen forest assets only** (no `EXPORT_SEASON` variants, no `SEASONAL`
    textures). XP12's season rasters put the Andean highlands (1,500–2,500 m, e.g. Rionegro) in
    "winter" for ~6 months, so seasonal assets show bare trees. Colombia has no seasonal trees.
-   **Palms are fine** (they exist in Medellín and Rionegro). The build refuses seasonal assets.
+   **Palms are fine** (they exist in Medellín and Rionegro). The build refuses seasonal assets
+   in any region with `evergreen_only = true` (Colombia's region file).
 4. **No console windows.** Every helper program (DSFTool, CLI workers) is started hidden via
    `forest/proc.py` (`CREATE_NO_WINDOW` + `SW_HIDE`). Never call `subprocess` directly.
 5. **The UI is a standalone desktop app like OrthoStudio-XP** (pywebview), **not a web app**.
@@ -72,6 +73,7 @@ that changes lives in `config.DATA_ROOT` (`%USERPROFILE%/.foreststudio`):
 | Path | What |
 |---|---|
 | `config/local.toml` | X-Plane location (Settings view) |
+| `config/regions/*.toml` | the user's own regions (optional; a file with a shipped region's name replaces it) |
 | `config/profiles/*.toml`, `config/rules/*.toml` | the user's profiles / forest types; missing files are copied from the repo defaults on first use (`config.ensure_user_config`, never overwrites) |
 | `config/catalog_xp12.json` | forest catalog generated from this X-Plane |
 | `cache/` | `tiles/<tile>/`, `osm/` (country .pbf), `ecoregions/`, `jobs/`, `history.jsonl`, `backups/`, `decoded/` |
@@ -97,7 +99,7 @@ CLI (used by the app's job runner; handy for debugging):
 | `forest catalog` | (Re)build `~/.foreststudio/config/catalog_xp12.json` from X-Plane's `1200 forests` library |
 | `forest fetch --tiles +06-076,+06-075` | Satellite rasters per tile (4 downloads at a time) + OSM in **one** pass; downloads the OSM country file / ecoregions zip first if missing |
 | `forest data osm [--update] [--force]` | Download / update the Geofabrik country file (only if the server's is newer), then re-extract every tile that has `osm.json` |
-| `forest data ecoregions [--update]` | Download the RESOLVE zip and make the Colombia cut-out |
+| `forest data ecoregions [--region x] [--update]` | Download the RESOLVE zip and make the region's cut-out |
 | `forest build --tile +06-076 --profile medium --region colombia --compile [--keep-text] [--install]` | Build one tile; `--install` ensures the pack link exists |
 | `forest decode <file.dsf> [--label x]` | DSF → text into `<data>/cache/decoded/` (debug) |
 | `forest poc …` | Phase-0 proof of concept (three test squares near SKRG) |
@@ -113,6 +115,8 @@ forest/
   migrate.py       one-time move of old in-repo data to ~/.foreststudio (+ junction re-point)
   datafolder.py    Settings → Data folder: check / move / switch, re-point links, location.toml
   credits.py       data + software credits (Settings → About) and the pack's CREDITS.txt
+  regions.py       Region files (config/regions/<name>.toml): label, bounds (map tiles), ecoregion
+                   cut-out box, Geofabrik osm_url, evergreen_only; names()/get()/default_name()
   tiles.py         Tile (1°×1°, name "+06-076", 10° folder "+00-080"), Grid (north-up raster)
                    Tile.cache creates the folder (write); Tile.cache_path never does (read/check)
   paths.py         <data>/out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
@@ -125,7 +129,7 @@ forest/
                    osm.json (format VERSION 4; old versions re-extracted automatically)
     osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
     elevation.py   elevation from X-Plane's own base mesh via DSFTool (no download)
-    ecoregions.py  RESOLVE Ecoregions 2017 → clipped Colombia GeoJSON → per-tile raster
+    ecoregions.py  RESOLVE Ecoregions 2017 → cache/ecoregions/<region>.geojson → per-tile raster
   exclusions.py    OSM cut-outs (roads, buildings, water, runways, rail/power) + tree hints
                    (single trees, tree rows, parks/golf/woods, plantations)
   build.py         classify → vectorize → OSM trees → budget → DSF text (+ overlay/preview/stats)
@@ -137,11 +141,14 @@ forest/
   history.py       measured seconds/MB/peak RAM per step → estimates
   resources.py     parallel builds = min(physical cores − 1, (free RAM − 2 GB) / peak GB, 8)
   diskusage.py     disk usage by category + safe clean-ups
-  proc.py          hidden subprocess helpers (no console windows)
+  proc.py          hidden subprocess helpers (no console windows); run_measured = + peak memory
+  fsutil.py        size_bytes / size_mb / move_merge (no-overwrite move) shared by data folder,
+                   migration, disk usage and history
   cli.py           command line
   app/             pywebview desktop app: main.py, api.py (js_api), settings.py (schemas,
                    validation, TOML writers), devserver.py (dev only), ui/{index.html,app.css,app.js,views.js}
 config/                             DEFAULTS shipped with the app (user copies live in ~/.foreststudio/config)
+  regions/colombia.toml             the region: map tiles, OSM extract, ecoregion box, evergreen_only
   profiles/{low,medium,high}.toml   performance profiles
   rules/colombia.toml               biomes, elevation bands, plantations, single-tree asset
   local.example.toml                template for ~/.foreststudio/config/local.toml
@@ -158,9 +165,14 @@ tests/                              pytest suite (sandboxed)
      parks/gardens/golf/woods), minus Hansen loss from `recent_loss_from`;
    - `smooth_passes` × 3×3 majority filter (mangrove cells exempt, so shore fringes survive);
    - cut-outs drawn at 2× detail, a cell cleared only if they cover ≥ `cutout_min_cover`; water is
-     **not** cut where WorldCover says mangrove;
-   - density = 0.6 × WorldCover share + 0.4 × Hansen, gaussian blur, quantised to `density_levels`;
-   - **biome** per cell from ecoregions; WorldCover mangrove class overrides to the `mangrove`
+     **not** cut in mangrove cells;
+   - **mangrove cells** = WorldCover class 95 (share ≥ `MANGROVE_MIN_FRAC`) **or OSM
+     `natural=wetland` + `wetland=mangrove`**; inside OSM mangroves grass/wetland/shrubland count as
+     half trees (`OSM_MANGROVE_LOW_VEG`, threshold `osm_green_min_frac`): WorldCover calls low
+     mangrove "herbaceous wetland" (SKCG canal banks and runway shore);
+   - density = 0.6 × WorldCover share + 0.4 × Hansen (mangrove cells: WorldCover only, Hansen 2000
+     misses Caribbean mangroves), gaussian blur, quantised to `density_levels`;
+   - **biome** per cell from ecoregions; mangrove cells override to the `mangrove`
      biome; asset = that biome's elevation band × dense/sparse (`sparse_below`);
    - **plantations** (OSM orchards/plantations/farmland/needleleaved forests) replace the biome
      asset inside their outline and are planted regardless of satellite tree share; rules with
@@ -217,7 +229,8 @@ tests/                              pytest suite (sandboxed)
 App job = `fetch --tiles all` (satellite downloads ×4 in parallel, OSM one pass) then a pool of
 N `build` subprocesses (N = Auto from `resources.auto_workers()`, measured peak ≈ 3.8 GB RAM for
 Medellín, 2.2 GB San Andrés since 2026-11-21 (was 5.3 / 4.3 GB); this PC 8 cores / 33 GB → Auto 3,
-rising as new builds replace the old peaks in `history.jsonl`). Logs tagged `[tile]`; a failed
+rising as new builds replace the old peaks in `history.jsonl`; the peak includes DSFTool, measured
+since 2026-11-23: 0.27 GB on Medellín while the build holds 0.4 GB, so it never sets the limit). Logs tagged `[tile]`; a failed
 tile doesn't stop others; cancel terminates all. Every job is saved in `<data>/cache/jobs/<id>.{json,log}`
 with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by parsing log lines in
 `JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
@@ -310,6 +323,19 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 
 ---
 
+## Regions (`config/regions/<name>.toml`)
+
+A region's name names its forest types (`config/rules/<name>.toml`), its pack (`forest_<name>`),
+its OSM file and its ecoregion cut-out. Keys: `label`, `bounds = [w, s, e, n]` (whole degrees: the
+tiles offered on the map), optional `ecoregion_bounds` (cut-out box, default bounds + 1°; Colombia
+keeps its old box so tiles stay identical), `osm_url` (Geofabrik `.osm.pbf`), `evergreen_only`
+(Colombia true: rule 3; false lets rules and builds use seasonal types). Shipped files in
+`<code>/config/regions/`, the user's in `<data>/config/regions/` (same name wins). Only Colombia
+exists (**do not add regions unless asked**). Not done yet: global default rules by RESOLVE biome,
+border tiles needing two OSM extracts (a tile's `osm.json` comes from one region's file), several
+OSM files per region, per-region scenery-order advice. The tile cache (`cache/tiles/`) is shared by
+all regions; built tiles are per region (`out/forest_<region>`, `out/studio_<region>`).
+
 ## Rules file (`config/rules/colombia.toml`)
 
 - `sparse_below`, `single_tree` (asset for OSM single trees/rows), `town_tree` (town trees where
@@ -322,7 +348,7 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
   coconut, banana, coffee (shrubs + shade), rubber, conifer (pine), eucalyptus, no_trees, orchard.
 - `[[biome]]` name, label, color, `ecoregions = [...]`, `[[biome.band]]` name, elev_max, dense,
   sparse. Biomes: rainforest, montane, dry_forest, xeric, savanna (Llanos), mangrove (**no
-  ecoregions — WorldCover class 95 only**; RESOLVE mangrove polygons reach far inland and were
+  ecoregions — WorldCover class 95 and OSM mangrove areas only**; RESOLVE mangrove polygons reach far inland and were
   moved to dry_forest/rainforest), paramo, **default** (required, catch-all, last).
   **xeric** forest uses real dry-forest trees (`broadleaves/hot_dry` / `g8/broad_sp_hot_sdry`), not
   shrubs: the RESOLVE "Guajira-Barranquilla xeric scrub" ecoregion also covers the Sucre/Bolívar/
@@ -340,7 +366,8 @@ global_density, density_blur_cells, simplify_m, chunks_per_degree, density_level
 scrub_density (0 = off), scrub_min_frac, town_trees_per_km2 (0 = off), town_min_built.
 Keys added later have defaults in `build.PROFILE_DEFAULTS` (older profile files still build/load).
 Schema, ranges, help texts and FPS marks: `forest/app/settings.py` (`PROFILE_SCHEMA`, `FPS_IMPACT`).
-The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
+Shipped medium: `tile_tree_budget` 30M, `global_density` 0.75 (owner's FPS check 2026-11-23,
+frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner uses).
 
 ---
 
@@ -370,7 +397,7 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
   require; written on every compile and on Install pack); app files go to `<data>/out/studio_<region>/`.
-- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 4)
+- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 5)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
 - Large inline edits: prefer the Edit tool; Python patch scripts via heredoc break on Windows
@@ -380,8 +407,9 @@ The owner currently uses medium with `tile_tree_budget` ≈ 25–27M.
 
 - First public release: packaged Windows build (PyInstaller zip / installer) as a GitHub Release,
   version number + changelog (shown in About), README screenshots, issue templates/CONTRIBUTING.
-- Owner checks in the sim: town-tree density, scrub, xeric trees; FPS headroom (frame times with
-  the 60 fps cap off) → maybe raise the medium tree budget / town trees.
+- Owner checks in the sim: town-tree density, scrub, xeric trees, the new OSM mangroves (SKCG).
+- OSM multipolygon holes are dropped: ~80 km² of forest on river islands (+07-074, +06-075) is cut
+  as water. Fix parked (changes tiles; see PLAN.md 2026-11-21).
 - Test on a real Mac / Linux machine (only CI so far).
 - Other regions (Phase 4) — only when asked.
 - **Not wanted** (owner, 2026-11-21): a "select all Colombia" button (tiles are selected by hand);

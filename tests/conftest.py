@@ -30,6 +30,7 @@ def sandbox(tmp_path, monkeypatch):
     repo = tmp_path / "repo"                 # the code folder (shipped defaults, bundled tools)
     (repo / "config" / "profiles").mkdir(parents=True)
     (repo / "config" / "rules").mkdir(parents=True)
+    shutil.copytree(ROOT / "config" / "regions", repo / "config" / "regions")   # shipped region files
     proj = tmp_path / "data"                 # the data folder (~/.foreststudio)
     (proj / "config" / "profiles").mkdir(parents=True)
     (proj / "config" / "rules").mkdir(parents=True)
@@ -63,7 +64,6 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(diskusage, "CACHE", cache)
     monkeypatch.setattr(diskusage, "OUT", out)
     monkeypatch.setattr(osm_pbf, "PBF_DIR", cache / "osm")
-    monkeypatch.setattr(osm_pbf, "DEFAULT_PBF", cache / "osm" / "none.osm.pbf")
     monkeypatch.setattr(eco, "ECO_DIR", cache / "ecoregions")
     monkeypatch.setattr(eco, "ZIP", cache / "ecoregions" / "raw" / "Ecoregions2017.zip")
     monkeypatch.setattr(catalog, "DEFAULT_CATALOG", proj / "config" / "catalog_xp12.json")

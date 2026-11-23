@@ -36,6 +36,8 @@ QUERY = """
   node["natural"="tree"]({s},{w},{n},{e});
   way["natural"~"^(tree_row|wood|scrub|heath)$"]({s},{w},{n},{e});
   relation["natural"~"^(wood|scrub|heath)$"]({s},{w},{n},{e});
+  way["natural"="wetland"]["wetland"="mangrove"]({s},{w},{n},{e});
+  relation["natural"="wetland"]["wetland"="mangrove"]({s},{w},{n},{e});
   way["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
   relation["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
   way["landuse"="farmland"]["crop"]({s},{w},{n},{e});
@@ -94,12 +96,14 @@ def _fetch_bbox(s: float, w: float, n: float, e: float, out: Path, retries: int 
     raise RuntimeError(f"Overpass fetch failed for {out.name}: {last}")
 
 
-def fetch_osm(tile: Tile) -> Path:
-    """Use the local Geofabrik extract when present (preferred), else Overpass."""
-    from forest.fetch.osm_pbf import DEFAULT_PBF, extract_tile
+def fetch_osm(tile: Tile, region: str) -> Path:
+    """Use the region's local Geofabrik extract when present (preferred), else Overpass."""
+    from forest import regions
+    from forest.fetch.osm_pbf import extract_tile
 
-    if DEFAULT_PBF.exists():
-        return extract_tile(tile, DEFAULT_PBF)
+    pbf = regions.get(region).osm_file
+    if pbf.exists():
+        return extract_tile(tile, pbf)
     return fetch_overpass(tile)
 
 

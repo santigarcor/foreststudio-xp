@@ -10,10 +10,10 @@ touched. Safe to run every start: it does nothing once the old folders are gone.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 from forest import config
+from forest.fsutil import move_merge
 
 
 def _legacy_pairs() -> list[tuple[Path, Path]]:
@@ -28,27 +28,6 @@ def _legacy_pairs() -> list[tuple[Path, Path]]:
 
 def pending() -> bool:
     return any(src.exists() for src, _ in _legacy_pairs())
-
-
-def _move(src: Path, dst: Path, notes: list[str]) -> None:
-    """Move src to dst. Folders are merged item by item; existing items in dst win and the
-    old copy is left where it was (reported), so nothing is ever overwritten."""
-    if src.resolve() == dst.resolve():
-        return
-    if not dst.exists():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
-        notes.append(f"moved {src} -> {dst}")
-        return
-    if src.is_dir() and dst.is_dir():
-        for child in sorted(src.iterdir()):
-            _move(child, dst / child.name, notes)
-        try:
-            src.rmdir()
-        except OSError:
-            pass  # something was left behind (conflict) - reported below
-        return
-    notes.append(f"kept {src} (already exists in {dst.parent})")
 
 
 def _region_links() -> list[str]:
@@ -80,11 +59,11 @@ def run() -> list[str]:
     notes: list[str] = []
     pairs = _legacy_pairs()
     if pairs[0][0].exists():
-        _move(*pairs[0], notes)      # local.toml first: finding the links needs X-Plane's location
+        move_merge(*pairs[0], notes, report_moves=True)      # local.toml first: finding the links needs X-Plane's location
     relink = _region_links()
     for src, dst in pairs[1:]:
         if src.exists():
-            _move(src, dst, notes)
+            move_merge(src, dst, notes, report_moves=True)
     if relink:
         from forest import pack
 

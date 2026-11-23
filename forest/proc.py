@@ -28,6 +28,46 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL, **kw)
 
 
+def run_measured(cmd: list[str]) -> tuple[subprocess.CompletedProcess, float | None]:
+    """Like run(), plus the program's peak memory in GB (None if it can't be read)."""
+    p = popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    out, err = p.communicate()
+    peak = None
+    try:
+        if sys.platform == "win32":
+            peak = _win_peak_bytes(p)
+        else:
+            import resource
+
+            # Largest child so far; DSFTool is the only big child of a build process.
+            kb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+            peak = kb if sys.platform == "darwin" else kb * 1024   # bytes on macOS, KB on Linux
+    except Exception:  # noqa: BLE001 - measuring is best effort
+        peak = None
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err), (peak / 1e9 if peak else None)
+
+
+def _win_peak_bytes(p: subprocess.Popen) -> int | None:
+    """Peak working set of a finished process, read through its still-open handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    pmc = PMC()
+    pmc.cb = ctypes.sizeof(PMC)
+    fn = ctypes.WinDLL("psapi").GetProcessMemoryInfo
+    fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+    if not fn(int(p._handle), ctypes.byref(pmc), pmc.cb):
+        return None
+    return int(pmc.PeakWorkingSetSize)
+
+
 def popen(cmd: list[str], **kw) -> subprocess.Popen:
     """subprocess.Popen, hidden."""
     return subprocess.Popen(cmd, creationflags=HIDDEN, startupinfo=_startupinfo(),

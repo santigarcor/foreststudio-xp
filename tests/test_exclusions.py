@@ -86,8 +86,11 @@ def test_tree_hints(tmp_path):
         way(4, {"landuse": "orchard", "trees": "oil_palms"}, sq(-75.8, 6.8, 0.01)),
         way(5, {"landuse": "forest", "leaf_type": "needleleaved"}, sq(-75.85, 6.85, 0.01)),
         way(6, {"highway": "primary"}, [(-75.0, 6.0), (-75.1, 6.1)]),
+        way(7, {"natural": "wetland", "wetland": "mangrove"}, sq(-75.9, 6.9, 0.01)),
+        way(8, {"natural": "wetland", "wetland": "marsh"}, sq(-75.95, 6.95, 0.01)),
     ]
     h = osm_tree_hints(osm_file(tmp_path, els))
+    assert len(h["mangrove"]) == 1            # mangroves only, not other wetlands
     assert h["points"] == [(-75.5, 6.5)]
     assert len(h["rows"]) == 1
     assert len(h["green"]) == 2               # golf course + forest

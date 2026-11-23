@@ -95,10 +95,10 @@ def test_biome_raster_maps_ecoregions_and_falls_back_to_default(monkeypatch):
     ecoids = np.zeros(g.shape, dtype=np.int32)
     ecoids[:, :5] = 7       # listed ecoregion
     ecoids[:, 5:] = 9       # unlisted ecoregion → default
-    monkeypatch.setattr(eco, "ecoregion_raster", lambda t, grid: (ecoids, {7: "Napo moist forests", 9: "Somewhere"}))
+    monkeypatch.setattr(eco, "ecoregion_raster", lambda t, grid, region: (ecoids, {7: "Napo moist forests", 9: "Somewhere"}))
     biomes = rule_biomes({"biome": [{"name": "rainforest", "ecoregions": ["Napo moist forests"], "band": []},
                                     {"name": "default", "ecoregions": [], "band": []}]})
-    r = biome_raster(Tile(6, -76), g, biomes)
+    r = biome_raster(Tile(6, -76), g, biomes, "colombia")
     assert (r[:, :5] == 0).all() and (r[:, 5:] == 1).all()
 
 
