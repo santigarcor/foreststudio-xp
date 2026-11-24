@@ -612,3 +612,49 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
 - Measured (scratch, 2 slots): +06-076 + +30-082 with both OSM files to read → 375 s. OSM passes
   137 s (Colombia, alone 135) and 309 s (Florida, alone 305): no slowdown side by side. Peaks 1.39 /
   3.05 GB. +06-076 was built (63 s) while Florida's file was still being read. Old order ≈ 510 s.
+
+### 2026-11-24 — OSM country files read ~2.3× faster (same output)
+
+- Measured where a pass over colombia-latest.osm.pbf went: decoding + storing every node location
+  in C++ 3.7 s; a Python call per node/way just to reject it ~47 s; our tag tests 18 s; building
+  each wanted way's coordinates node by node in Python ~63 s (for every road/building of the whole
+  country, before knowing whether it touches a requested tile); json.dumps ~7 s. The second read
+  osmium does for multipolygons is cheap (relations only: 0.2 s).
+- Fix 1: osmium C++ filters before Python (`osm_pbf.PREFILTER_KEYS`): only `natural=tree` points,
+  and ways / relations / areas with one of highway, building, natural, landuse, waterway, aeroway,
+  railway, power, leisure. The Python tests still decide. Guard test: every key the tests read is
+  listed; with and without filters the osm.json is byte-identical (tiny file with a multipolygon).
+- Fix 2: a wanted way's coordinates come from osmium's WKBFactory (C++, `use_nodes.ALL` keeps
+  repeated nodes) read with numpy; a way with a missing location or < 2 points raises and takes the
+  old per-node path (`_way_slow`). Test: both paths write the same bytes, odd cases included.
+  (Tried and dropped: shapely bounds of a WKB to skip far ways — slower, 106 s; taking each node's
+  Location once — no gain.)
+- Check (scratch, real country files): 9 tiles (Colombia ×5, Florida ×2, Colombia+Ecuador border
+  +00-078, Jamaica) — same elements, same headers; only a few multipolygons sit at another place in
+  the list (osmium hands assembled areas over in batches). Tiles built from old vs new osm.json:
+  +06-076 and +30-082 DSF text and PNGs byte-identical. No VERSION bump: nothing is re-read.
+- Times: Colombia 5 tiles 146 → 62 s, Florida 2 tiles 324 → 144 s, border 178 → 64 s, Jamaica 23 → 12 s.
+- Incident: a first version of the new test called `monkeypatch.undo()`, which also undid the
+  sandbox, so it wrote test data over the real +06-076 / +06-077 osm.json. Restored the same day
+  with the committed code from the same country file, original mtimes put back from the tiles'
+  stats (+06-076 up to date again); nothing else in the data folder changed. The test now patches
+  inside `monkeypatch.context()` and asserts it writes under the sandbox. Never use undo() with the
+  sandbox fixture.
+
+### 2026-11-24 — No trees on building sites, car parks and ponds (+30-082, owner's sim check)
+
+- Owner saw trees on car parks (town trees) and on a cleared sandy site with a pond near
+  Jacksonville. Measured on the built +30-082 against Florida's OSM: 951 town trees inside
+  `amenity=parking` areas (never extracted; WorldCover calls car parks built-up → town cells);
+  2.0 of 6.7 km² of `landuse=construction` sites still had forest (satellite maps 2021–2024 predate
+  the clearing); smaller amounts on sand, brownfields, quarries; 218 town trees in OSM water
+  (water was only cut per cell, ≥ 50 % cover).
+- Fix: extract car parks, landfills and bare land (`landuse=construction|quarry|brownfield`,
+  `natural=sand|bare_rock`; `amenity` added to `PREFILTER_KEYS`; `osm_pbf.VERSION` 7). Bare land is
+  a cut-out (`bare`); car parks and landfills are no-town-tree land; town trees are now dropped at
+  the exact spot on water, bare land, car parks and industrial/commercial land (not only by cell).
+  `BUILD_VERSION` 6 → every tile shows as outdated.
+- Result (+30-082, scratch rebuild): forest on construction sites 2.0 → 0.02 km², town trees on
+  car parks 951 → 0, in water 218 → 5. The trees left on car parks / sand (304 / 251) are all
+  OSM-mapped `natural=tree` points (real, kept). Landfills keep their forest (0.34 of 4.7 km²: the
+  wooded buffers inside the outline). Sites cleared but not mapped in OSM still get trees.

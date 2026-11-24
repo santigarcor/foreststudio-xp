@@ -93,13 +93,15 @@ class _ToBuffer:
 
 
 def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None = None) -> dict[str, list]:
+    from forest.fetch.osm_pbf import is_bare_area
+
     p = {**DEFAULTS, **(profile or {})}
     d = lambda m: _deg(m, lat_mid)  # noqa: E731
     road_k = float(p["road_clearance_scale"])
     bld = float(p["building_clearance_m"])
     rwy = float(p["runway_clearance_m"])
     data = load_osm(osm_json)
-    cats = ("roads", "buildings", "water", "runways", "airport_grounds", "corridors")
+    cats = ("roads", "buildings", "water", "runways", "airport_grounds", "corridors", "bare")
     acc = {k: _ToBuffer() for k in cats}
 
     def building(poly: Polygon) -> None:
@@ -118,6 +120,9 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
             elif tags.get("aeroway") == "aerodrome":
                 for poly in polys:
                     acc["airport_grounds"].add(poly)
+            elif is_bare_area(tags):
+                for poly in polys:
+                    acc["bare"].add(poly)
             continue
         pts = _coords(el)
         if len(pts) < 2:
@@ -153,6 +158,8 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
             acc["corridors"].add(LineString(pts), d(RAIL_HALF_WIDTH), "flat")
         elif tags.get("power") == "line":
             acc["corridors"].add(LineString(pts), d(POWER_HALF_WIDTH), "flat")
+        elif closed and is_bare_area(tags):
+            acc["bare"].add(Polygon(pts))
     out = {k: acc[k].result() for k in cats}
     if not int(p["clear_airport_grounds"]):
         out["airport_grounds"] = []
@@ -176,6 +183,7 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
         TOWN_LANDUSE,
         is_green_area,
         is_mangrove_area,
+        is_parking_area,
         is_plantation,
         is_scrub_area,
         is_wetland_area,
@@ -201,7 +209,8 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
                 out["wetland"] += [p for p in polys if p.is_valid]
             return
         lu = tags.get("landuse")
-        key = ("residential" if lu in TOWN_LANDUSE else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE
+        key = ("residential" if lu in TOWN_LANDUSE
+               else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE or is_parking_area(tags)
                else "scrub" if is_scrub_area(tags) else None)
         if key:
             out[key] += [p for p in polys if p.is_valid]

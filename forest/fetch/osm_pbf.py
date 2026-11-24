@@ -12,7 +12,9 @@ Writes cache/tiles/<tile>/osm.json in the same shape as Overpass `out geom`:
              {"type": "relation", "id", "tags", "members": [{"role": "outer", "geometry": [...]}]}
 
 Kinds of features:
-- no-tree cut-outs: roads, buildings, water, aeroways, rail, power lines;
+- no-tree cut-outs: roads, buildings, water, aeroways, rail, power lines, bare land
+  (construction sites, quarries, brownfields, sand, rock);
+- no town trees: car parks, industrial/commercial/retail land, landfills;
 - tree hints: single trees, tree rows, woods/forests, parks, gardens, golf courses, mangroves;
 - plantations: orchards, plantations, vineyards, farmland with a crop/trees tag.
 """
@@ -24,13 +26,15 @@ import math
 import re
 from pathlib import Path
 
+import numpy as np
 import osmium
+import osmium.geom
 
 from forest import config
 from forest.tiles import Tile
 
 PBF_DIR = config.CACHE_ROOT / "osm"
-VERSION = 6  # 5: mangroves (natural=wetland + wetland=mangrove); 6: every natural=wetland (swamps, marshes…). Bump when the set of extracted features changes (old caches are re-extracted)
+VERSION = 7  # 5: mangroves (natural=wetland + wetland=mangrove); 6: every natural=wetland (swamps, marshes…); 7: bare land (construction, quarry, brownfield, sand, rock), car parks, landfills. Bump when the set of extracted features changes (old caches are re-extracted)
 
 _WATERWAY = re.compile(r"^(river|riverbank|canal)$")
 _AEROWAY = re.compile(r"^(aerodrome|runway|taxiway|apron|helipad)$")
@@ -38,8 +42,21 @@ GREEN_LEISURE = ("park", "golf_course", "garden", "nature_reserve")
 PLANTATION_LANDUSE = ("orchard", "plantation", "vineyard")
 # Town trees go in residential land, never in industrial/commercial zones.
 TOWN_LANDUSE = ("residential",)
-NO_TOWN_TREE_LANDUSE = ("industrial", "commercial", "retail")
+NO_TOWN_TREE_LANDUSE = ("industrial", "commercial", "retail", "landfill")
 SCRUB_NATURAL = ("scrub", "heath")
+# Land with no trees now, whatever the (older) satellite maps say: building sites cleared after
+# 2021-2024 (Jacksonville: 2 of 6.7 km² of construction sites still had forest), quarries, sand.
+BARE_LANDUSE = ("construction", "quarry", "brownfield")
+BARE_NATURAL = ("sand", "bare_rock")
+
+
+def is_bare_area(t) -> bool:
+    return t.get("landuse") in BARE_LANDUSE or t.get("natural") in BARE_NATURAL
+
+
+def is_parking_area(t) -> bool:
+    """Car parks: no town trees (WorldCover calls them built-up, so they count as town)."""
+    return t.get("amenity") == "parking"
 
 
 def is_town_area(t) -> bool:
@@ -79,14 +96,36 @@ def wanted_way(t) -> bool:
         or bool(_AEROWAY.match(t.get("aeroway", "")))
         or t.get("railway") == "rail" or t.get("power") == "line"
         or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
-        or is_wetland_area(t)
+        or is_wetland_area(t) or is_bare_area(t) or is_parking_area(t)
     )
 
 
 def wanted_area_relation(t) -> bool:
     return ("building" in t or t.get("natural") == "water" or t.get("aeroway") == "aerodrome"
             or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
-            or is_wetland_area(t))
+            or is_wetland_area(t) or is_bare_area(t) or is_parking_area(t))
+
+
+# Speed: a country file holds tens of millions of points and lines; calling Python for each one
+# just to reject it took ~90 % of a pass (Colombia: 3.7 s to decode in C++, 69 s with a Python
+# test per object). These osmium filters drop, in C++, everything the tests above would reject:
+# only tree points, and ways / relations / areas carrying at least one of these keys, reach
+# Python, where wanted_way / wanted_area_relation still decide. Node locations are stored BEFORE
+# the filters (apply_file puts the location handler first), so every way keeps its geometry.
+# EVERY key wanted_way / wanted_area_relation look at must be listed here (test_osm_extract).
+PREFILTER_KEYS = ("highway", "building", "natural", "landuse", "waterway", "aeroway", "railway",
+                  "power", "leisure", "amenity")
+PREFILTER = True   # tests compare with and without
+_ALL_NODES = osmium.geom.use_nodes.ALL   # keep repeated nodes: the same points as the per-node path
+
+
+def _prefilters() -> list:
+    if not PREFILTER:
+        return []
+    from osmium import filter as f
+    from osmium.osm import AREA, NODE, RELATION, WAY
+    return [f.TagFilter(("natural", "tree")).enable_for(NODE),
+            f.KeyFilter(*PREFILTER_KEYS).enable_for(WAY | RELATION | AREA)]
 
 
 class _TileWriter:
@@ -130,6 +169,7 @@ class _Handler(osmium.SimpleHandler):
     def __init__(self, writers: dict[tuple[int, int], _TileWriter]):
         super().__init__()
         self.writers = writers
+        self._wkb = osmium.geom.WKBFactory()
 
     def _targets(self, pts) -> list[_TileWriter]:
         lons = [p[0] for p in pts]
@@ -150,9 +190,36 @@ class _Handler(osmium.SimpleHandler):
         if w is not None:
             w.add({"type": "node", "id": n.id, "tags": dict(n.tags), "lat": lat, "lon": lon})
 
+    def _box_targets(self, x0: float, y0: float, x1: float, y1: float) -> list[_TileWriter]:
+        out = []
+        for la in range(math.floor(y0), math.floor(y1) + 1):
+            for lo in range(math.floor(x0), math.floor(x1) + 1):
+                w = self.writers.get((la, lo))
+                if w is not None:
+                    out.append(w)
+        return out
+
     def way(self, wy):
         if not wanted_way(wy.tags):
             return
+        # Speed (same result): osmium builds the line's coordinates in C++ (WKB, every node kept)
+        # and numpy reads them in one go, instead of one Python object per node (~30 % of a pass).
+        # Lines with a missing location or < 2 points raise and take the exact per-node path.
+        try:
+            wkb = self._wkb.create_linestring(wy, _ALL_NODES)
+        except Exception:  # noqa: BLE001 - osmium's geometry errors
+            return self._way_slow(wy)
+        xy = np.frombuffer(bytes.fromhex(wkb), "<f8", offset=9).reshape(-1, 2)
+        (x0, y0), (x1, y1) = xy.min(axis=0), xy.max(axis=0)
+        targets = self._box_targets(float(x0), float(y0), float(x1), float(y1))
+        if not targets:
+            return
+        el = {"type": "way", "id": wy.id, "tags": dict(wy.tags),
+              "geometry": [{"lat": lat, "lon": lon} for lon, lat in xy.tolist()]}
+        for w in targets:
+            w.add(el)
+
+    def _way_slow(self, wy):
         pts = [(n.lon, n.lat) for n in wy.nodes if n.location.valid()]
         if len(pts) < 2:
             return
@@ -237,7 +304,7 @@ def extract_tiles(tiles: list[Tile], pbf: Path | list[Path] | None = None,
             from forest import events
             events.emit("osm_reading", file=f.name, mb=round(f.stat().st_size / 1e6), n=len(use),
                         tiles=sorted(t.name for t, src in todo.values() if f in src))
-            _Handler(use).apply_file(str(f), locations=True, idx="flex_mem")
+            _Handler(use).apply_file(str(f), locations=True, idx="flex_mem", filters=_prefilters())
     except BaseException:
         for w in writers.values():
             w.fh.close()

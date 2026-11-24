@@ -623,7 +623,8 @@ TOWN_OVERSAMPLE = 3.0
 
 def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     """Scattered trees in towns (X-Plane point forests): random spots in town cells, kept off
-    buildings, roads, runways and rail/power corridors. The same tile always gets the same trees."""
+    buildings, roads, runways, rail/power corridors, water, bare land, car parks and
+    industrial/commercial land. The same tile always gets the same trees."""
     import shapely
     from shapely import STRtree
 
@@ -649,9 +650,10 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     lon = w0 + (cols + rng.random(cols.size)) * d
     lat = n0 - (rows + rng.random(rows.size)) * d
     g = c["geoms"]
-    blockers = [x for k in ("buildings", "roads", "runways", "corridors") for x in g.get(k, [])
+    # Exact spots, not cells: a cell half covered by a car park or pond is still town.
+    blockers = [x for k in ("buildings", "roads", "runways", "corridors", "water", "bare") for x in g.get(k, [])
                 if x is not None and x.is_valid and not x.is_empty]
-    blockers += [x for x in c["hints"].get("airports", []) if not x.is_empty]
+    blockers += [x for k in ("airports", "no_town_trees") for x in c["hints"].get(k, []) if not x.is_empty]
     keep = np.ones(lon.size, dtype=bool)
     if blockers:
         hit = STRtree(blockers).query(shapely.points(lon, lat), predicate="intersects")[0]
@@ -913,9 +915,10 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 5  # 2: scrub and town trees; 3: none of them inside airport grounds;
+BUILD_VERSION = 6  # 2: scrub and town trees; 3: none of them inside airport grounds;
 # 4: OSM mangroves, mangrove thickness from WorldCover only; 5: climate biomes: swamps, wetland bushes,
-# cloud forest, savanna trees, climate orchards / town trees, OSM leaf_type
+# cloud forest, savanna trees, climate orchards / town trees, OSM leaf_type; 6: no trees on OSM bare
+# land (construction, quarry, brownfield, sand, rock), no town trees on car parks, landfills or water
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json", clim.LEAF_FILE)
 
 

@@ -64,6 +64,10 @@ def _make_tile_data(sandbox):
         {"type": "way", "id": 7, "tags": {"landuse": "industrial"}, "geometry": sq(-75.1, 6.8, 0.04)},
         {"type": "way", "id": 8, "tags": {"natural": "scrub"}, "geometry": sq(-75.6, 6.92, 0.04)},
         {"type": "way", "id": 9, "tags": {"aeroway": "aerodrome", "icao": "SKXX"}, "geometry": sq(-75.24, 6.76, 0.04)},
+        # Town: a car park and a pond (no town trees); forest: a building site (no trees at all).
+        {"type": "way", "id": 10, "tags": {"amenity": "parking"}, "geometry": sq(-75.05, 6.85, 0.02)},
+        {"type": "way", "id": 11, "tags": {"natural": "water", "water": "basin"}, "geometry": sq(-75.02, 6.80, 0.01)},
+        {"type": "way", "id": 12, "tags": {"landuse": "construction"}, "geometry": sq(-75.9, 6.7, 0.05)},
     ]
     write_json(c / "osm.json", {"version": 3, "elements": els})
 
@@ -195,6 +199,29 @@ def test_town_trees_avoid_buildings_and_industry(built_tile):
     assert not any(building.contains(q) for q in town)
     assert not any(industrial.contains(q) for q in town)
     assert not any(airport.contains(q) for q in town)          # no town trees on airport grounds
+    parking, pond = box(-75.05, 6.85, -75.03, 6.87), box(-75.02, 6.80, -75.01, 6.81)
+    assert not any(parking.contains(q) or pond.contains(q) for q in town)
+
+
+@pytest.mark.integration
+def test_no_forest_on_construction_sites(built_tile):
+    """The satellite sees forest there, but OSM says the land is being built on now."""
+    from shapely.geometry import Point
+    site = Point(-75.875, 6.725)   # centre of the 0.05° building site in the western forest
+    cur, wind, inside = None, [], []
+    for ln in built_tile.read_text().splitlines():
+        if ln.startswith("BEGIN_POLYGON"):
+            cur, wind = int(ln.split()[2]) < 256, []
+        elif ln.startswith("POLYGON_POINT") and cur:
+            wind.append(tuple(map(float, ln.split()[1:3])))
+        elif ln.startswith("END_WINDING") and cur and len(wind) >= 3:
+            from shapely.geometry import Polygon
+            inside.append(Polygon(wind).contains(site))
+            wind = []
+    assert inside and not any(inside)
+    from forest.paths import studio_path
+    stats = json.loads(studio_path(TILE, ".stats.json").read_text())
+    assert stats["exclusion_cells"]["bare"] > 0
 
 
 def test_old_rules_get_scrub_and_town_defaults(real_rules):

@@ -134,13 +134,19 @@ forest/
     geofabrik.py   Geofabrik index-v1.json (cache/osm/geofabrik-index.json): tree of extracts,
                    tiles an extract's outline touches, region file text, sizes (HEAD)
     osm_pbf.py     ONE pass over the Geofabrik .pbf → streams elements into every requested tile's
-                   osm.json (format VERSION 4; old versions re-extracted automatically)
+                   osm.json (format VERSION 6; old versions re-extracted automatically). Speed
+                   (2026-11-24, same output): osmium C++ filters (`PREFILTER_KEYS`: only tree
+                   points and ways/relations/areas with a key we use reach Python — every key
+                   wanted_way / wanted_area_relation read must be listed, a test checks) and way
+                   coordinates via osmium's WKB factory + numpy, not one Python object per node
+                   (`_way_slow` = the old per-node path, fallback). Colombia 5 tiles 146 → 62 s,
+                   Florida 324 → 144 s. Tiles built from it are byte-identical (DSF text, PNGs)
     osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
     elevation.py   elevation from X-Plane's own base mesh via DSFTool (no download)
     ecoregions.py  RESOLVE Ecoregions 2017 → cache/ecoregions/<region>.geojson → per-tile raster
     climate.py     leaf type (Copernicus LC100 forest-type window → tile leaftype.tif) × Köppen climate
                    (cache/climate/koppen_geiger_1991_2020.tif) → lib/g8/<family>[_sp]_<temp>_<moist>.for
-  exclusions.py    OSM cut-outs (roads, buildings, water, runways, rail/power) + tree hints
+  exclusions.py    OSM cut-outs (roads, buildings, water, runways, rail/power, bare land) + tree hints
                    (single trees, tree rows, parks/golf/woods, plantations)
   build.py         classify → vectorize → OSM trees → budget → DSF text (+ overlay/preview/stats)
   dsf/text.py      DSFTool text writer (OverlayTile, ForestPolygon, season rasters)
@@ -179,7 +185,9 @@ tests/                              pytest suite (sandboxed)
      parks/gardens/golf/woods), minus Hansen loss from `recent_loss_from`;
    - `smooth_passes` × 3×3 majority filter (mangrove cells exempt, so shore fringes survive);
    - cut-outs drawn at 2× detail, a cell cleared only if they cover ≥ `cutout_min_cover`; water is
-     **not** cut in mangrove cells;
+     **not** cut in mangrove cells; **bare land** (OSM `landuse=construction|quarry|brownfield`,
+     `natural=sand|bare_rock`; category `bare`) is a cut-out because the satellite maps (2021–2024)
+     still show forest on newer building sites (+30-082: 2.0 of 6.7 km² of construction sites);
    - **mangrove cells** = WorldCover class 95 (share ≥ `MANGROVE_MIN_FRAC`) **or OSM
      `natural=wetland` + `wetland=mangrove`**; inside OSM mangroves grass/wetland/shrubland count as
      half trees (`OSM_MANGROVE_LOW_VEG`, threshold `osm_green_min_frac`): WorldCover calls low
@@ -214,7 +222,8 @@ tests/                              pytest suite (sandboxed)
      density level; vectorised and budgeted with the forests. Grassland (30) is **not** used: in
      Colombia it is mostly cattle pasture.
    - **town** cells: WorldCover built-up (50) share ≥ `town_min_built` or OSM `landuse=residential`,
-     minus OSM industrial/commercial/retail, forest, plantations, water and **airport grounds**
+     minus OSM industrial/commercial/retail/landfill, car parks (`amenity=parking`), forest,
+     plantations, water and **airport grounds**
      (OSM aerodrome boundary; WorldCover calls apron/runway pavement built-up). Scrub also skips
      airport grounds; real forest there is kept unless `clear_airport_grounds = 1`.
 3. **Vectorize** per (asset, density level) inside `chunks_per_degree` windows, simplify
@@ -224,7 +233,9 @@ tests/                              pytest suite (sandboxed)
    → line forests (fill 256); skipped inside buildings, runway strips and existing forest; never
    thinned by the budget. **Town trees** (`build.town_trees`): Poisson-random points in town cells
    (`town_trees_per_km2`, seeded by tile name so rebuilds are identical), dropped if they hit a
-   building (with clearance), road, runway/taxiway or rail/power corridor (one bulk STRtree query);
+   building (with clearance), road, runway/taxiway, rail/power corridor, water, bare land, car park,
+   industrial/commercial/landfill land or airport grounds — at the exact spot, not per cell (one
+   bulk STRtree query; +30-082 had 951 town trees on car parks before);
    point forests per (biome `town_tree` or rules `town_tree`, chunk), ≤ 1000 points per polygon;
    `ForestPolygon.kind = "town"` keeps them apart in the stats; never thinned by the budget.
 5. **Budget**: estimated trees = area × density × global_density × trees/km²; scaled down to
@@ -483,7 +494,9 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 ## Testing
 
 - `tests/conftest.py` → `sandbox` fixture uses a temp code folder (`ns.repo`) and a temp data folder (`ns.root`) and redirects config paths, cache, out, jobs, history,
-  profiles/rules, OSM file, ecoregions dir and the X-Plane folder to `tmp_path`.
+  profiles/rules, OSM file, ecoregions dir and the X-Plane folder to `tmp_path`. **Never call
+  `monkeypatch.undo()` in a sandbox test**: it also undoes the sandbox and the test then writes into
+  the real data folder (happened once, 2026-11-24); patch inside `with monkeypatch.context() as m:`.
 - Unit tests: tiles/paths, DSF writer (winding, params, bounds, rasters), polygon splitting,
   plantation matching, biomes, exclusions & coverage, settings validation/round-trips, catalog
   parsing (synthetic library + .for), **one-pass OSM extraction (real pyosmium on a tiny .osm)**,
@@ -506,7 +519,7 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
   require; written on every compile and on Install pack); app files go to `<data>/out/studio/`.
-- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 6: every `natural=wetland`)
+- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 7: bare land, car parks, landfills)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
 - Large inline edits: prefer the Edit tool; Python patch scripts via heredoc break on Windows

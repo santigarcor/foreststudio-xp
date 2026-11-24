@@ -30,9 +30,14 @@ def test_geometries_by_category(tmp_path):
         way(5, {"aeroway": "aerodrome"}, sq(-75.45, 6.14, 0.05)),
         way(6, {"power": "line"}, [(-75.9, 6.9), (-75.8, 6.9)]),
         way(7, {"highway": "footway"}, [(-75.6, 6.6), (-75.5, 6.6)]),   # footpaths are not cut
+        way(8, {"landuse": "construction"}, sq(-75.7, 6.7, 0.01)),
+        way(9, {"natural": "sand"}, sq(-75.7, 6.8, 0.01)),
+        way(10, {"amenity": "parking"}, sq(-75.7, 6.9, 0.01)),            # town trees only
     ]
     g = osm_geometries(osm_file(tmp_path, els), LAT)
     assert len(g["roads"]) == 1 and len(g["buildings"]) == 1 and len(g["water"]) == 1
+    assert len(g["bare"]) == 2
+    assert len(osm_tree_hints(osm_file(tmp_path, els))["no_town_trees"]) == 1
     assert len(g["runways"]) == 1 and len(g["corridors"]) == 1
     assert g["airport_grounds"] == []  # whole grounds only with clear_airport_grounds = 1
     g2 = osm_geometries(osm_file(tmp_path, els), LAT, {"clear_airport_grounds": 1})
