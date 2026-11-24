@@ -42,9 +42,9 @@ def test_cache_path_does_not_create_folder(sandbox):
 def test_pack_and_studio_paths_are_separate(sandbox):
     from forest import paths
     t = Tile.parse("+06-076")
-    assert paths.pack_name("colombia") == "forest_colombia"
-    dsf = paths.dsf_path("colombia", t)
-    assert dsf == sandbox.root / "out" / "forest_colombia" / "Earth nav data" / "+00-080" / "+06-076.dsf"
-    st = paths.studio_path("colombia", t, ".stats.json")
-    assert st.parent == sandbox.root / "out" / "studio_colombia"
+    assert paths.PACK_NAME == "forest_studio_xp"
+    dsf = paths.dsf_path(t)
+    assert dsf == sandbox.root / "out" / "forest_studio_xp" / "Earth nav data" / "+00-080" / "+06-076.dsf"
+    st = paths.studio_path(t, ".stats.json")
+    assert st.parent == sandbox.root / "out" / "studio"
     assert "Earth nav data" not in str(st)  # app files never go into the X-Plane pack

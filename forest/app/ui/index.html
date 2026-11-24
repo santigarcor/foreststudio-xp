@@ -18,7 +18,6 @@
     <button data-view="appsettings">Settings</button>
   </nav>
   <label class="hdr">Profile <select id="profile"></select></label>
-  <label class="hdr">Region <select id="region"></select></label>
 </header>
 
 <main id="view-build" class="view on">
@@ -30,6 +29,7 @@
       </div>
       <label class="chk"><input type="checkbox" id="showOverlay" checked> Forest overlay</label>
       <input type="range" id="overlayOpacity" min="0" max="1" step="0.05" value="0.65" title="Overlay opacity">
+      <select id="goRegion" title="Move the map to one of your regions"></select>
     </div>
     <div class="flegend" id="forestLegend"></div>
     <div class="legend">
@@ -50,7 +50,8 @@
 
     <div class="tab on" id="tab-tiles">
       <h3>Selection</h3>
-      <p class="hint">Click tiles on the map to select them. Shift-click to add a row of tiles.</p>
+      <p class="hint">Click tiles on the map to select them (any of your regions, together). Shift-click to add a
+        row of tiles. More countries: Data → Regions.</p>
       <div class="row wrap">
         <button id="selBuilt" class="ghost">Select built</button>
         <button id="selOutdated" class="ghost" title="Built tiles whose profile, forest types or downloaded data changed since they were built">Select outdated</button>
@@ -113,6 +114,12 @@
           <button id="rulesSave" class="primary">Save</button>
         </div>
       </div>
+      <div class="row">
+        <label class="hint" for="region">Forest types of</label>
+        <select id="region"></select>
+      </div>
+      <p class="hint">Each region has its own forest types. A tile uses those of the region that covers most of
+        it (Tile info shows which).</p>
       <p class="hint">Forest type = <b>biome</b> (where it is) × <b>elevation band</b> × <b>dense</b> or
         <b>sparse</b> (tree density).
         <span id="seasonNote">Only evergreen X-Plane forests are offered (no winter look in tropical highlands).</span></p>
@@ -168,7 +175,6 @@
       build a tile; here you can see what you have, download data ahead of time, and get newer OpenStreetMap data.</p>
     <div class="info" id="dataRegions"></div>
     <div class="datacards">
-      <div class="info datacard" id="dcOsm"></div>
       <div class="info datacard" id="dcEco"></div>
       <div class="info datacard" id="dcSat">
         <h3>Satellite maps</h3>

@@ -2,14 +2,19 @@
 
 One TOML file per region: the shipped ones in <code>/config/regions/, and the user's own in
 <data>/config/regions/ (a file with the same name replaces the shipped one). The file name is
-the region's name, which also names its forest types (config/rules/<name>.toml) and its X-Plane
-pack (forest_<name>).
+the region's name, which also names its forest types (config/rules/<name>.toml), its OSM file
+and its ecoregion cut-out.
+
+The map offers every tile of every region; each tile is built with the forest types of ONE region,
+its owner (`owner`): the region whose Geofabrik outline covers most of the tile. All built tiles go
+into one X-Plane pack (paths.PACK_NAME).
 """
 
 from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from forest import config
@@ -197,7 +202,9 @@ def _covers(r: Region, tile: Tile) -> bool:
 
 def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
     """Every downloaded OSM extract that covers the tile (a tile on a border needs both
-    countries' files), plus the given region's own file when downloaded. Sorted by file name."""
+    countries' files), plus the given region's own file (default: the tile's owner) when
+    downloaded. Sorted by file name."""
+    region = region or owner(tile)
     out: dict[str, Path] = {}
     for n in names():
         try:
@@ -208,3 +215,55 @@ def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
         if f.exists() and f.name not in out and (n == region or _covers(r, tile)):
             out[f.name] = f
     return [out[k] for k in sorted(out)]
+
+
+def _share(r: Region, tile: Tile) -> float:
+    """How much of the tile the region's extract covers: Geofabrik's outline when its list knows
+    the file, else 1 for every tile of the region."""
+    from forest.fetch import geofabrik
+
+    e = geofabrik.by_file_name().get(r.osm_file.name)
+    return geofabrik.tile_shares(e["id"]).get(tile.name, 0.0) if e else 1.0
+
+
+@lru_cache(maxsize=4)
+def _owners(key: tuple) -> dict[str, str]:
+    rs = []
+    for n in names():
+        try:
+            rs.append(get(n))
+        except ValueError:
+            continue
+    claims: dict[str, list[Region]] = {}
+    for r in rs:
+        for t in r.tiles():
+            claims.setdefault(t.name, []).append(r)
+    out = {}
+    for name, cands in claims.items():
+        if len(cands) == 1:
+            out[name] = cands[0].name
+        else:
+            t = Tile.parse(name)
+            out[name] = max(cands, key=lambda r: (_share(r, t), r.name == default_name(), -names().index(r.name))).name
+    return out
+
+
+def _owners_key() -> tuple:
+    from forest.fetch import geofabrik
+
+    def mt(p: Path) -> int:
+        try:
+            return p.stat().st_mtime_ns
+        except OSError:
+            return 0
+    return (tuple((n, str(f), mt(f)) for n, f in sorted(_files().items())), mt(geofabrik.index_path()))
+
+
+def owners() -> dict[str, str]:
+    """Every tile any region offers → the region whose forest types build it (the one whose
+    outline covers most of the tile; ties: the default region, then by name)."""
+    return _owners(_owners_key())
+
+
+def owner(tile: Tile) -> str | None:
+    return owners().get(tile.name)

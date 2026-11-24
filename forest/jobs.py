@@ -130,13 +130,20 @@ class JobRecord:
             if note:
                 st["note"] = note
 
+    def data_note(self, note: str) -> None:
+        """What the shared data step is doing (downloading the country file, reading OSM…), shown
+        on every tile whose data isn't finished yet."""
+        for t in self.d["tiles"]:
+            if self.d["steps"][t]["data"]["status"] in ("pending", "running"):
+                self.step(t, "data", "running", note)
+
     def track(self, tag: str, line: str) -> None:
         """Advance steps from one log line (tag = tile name for build lines, '' for data)."""
         text = line.strip()
         if not tag:
             m = _TILE_RASTERS.match(text)
             if m:
-                self.step(m.group(1), "data", "running", "satellite data ready")
+                self.step(m.group(1), "data", "running", "satellite maps ready · OpenStreetMap next")
                 return
             m = _TILE_DATA_FAIL.match(text)
             if m:

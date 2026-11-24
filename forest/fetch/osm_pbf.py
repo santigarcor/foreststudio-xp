@@ -229,6 +229,8 @@ def extract_tiles(tiles: list[Tile], pbf: Path | list[Path] | None = None,
     try:
         for f in files:
             use = {(t.lat, t.lon): writers[(t.lat, t.lon)] for t, src in todo.values() if f in src}
+            print(f"reading OpenStreetMap: {f.name} ({f.stat().st_size / 1e6:.0f} MB) "
+                  f"for {len(use)} tile(s)", flush=True)
             _Handler(use).apply_file(str(f), locations=True, idx="flex_mem")
     except BaseException:
         for w in writers.values():

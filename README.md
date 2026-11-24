@@ -68,19 +68,20 @@ included or downloaded automatically.
 
 1. **Settings**: ForestStudio looks for X-Plane 12 by itself. If it doesn't find it, choose your
    X-Plane 12 folder and press **Save**. The setup checks should then show ✓.
-2. **Build** view: click tiles on the map to select them (shift-click selects a block of tiles).
+2. **Build** view: click tiles on the map to select them (shift-click selects a block of tiles). Tiles of
+   all your regions are on the same map and can be built together.
    Built tiles outlined in orange are outdated (see below).
 3. Press **Build selected**. The first build also downloads the OpenStreetMap country file and the
    biome map. Each tile takes about 1–2 minutes once its data is downloaded. Follow progress in the
    **Build queue**.
 4. Press **Install pack in X-Plane** (once). This adds a single folder link,
-   `Custom Scenery/forest_colombia`, that points to your built tiles. Every tile you build later shows
-   up there automatically.
+   `Custom Scenery/forest_studio_xp`, that points to your built tiles (all regions). Every tile you build
+   later shows up there automatically.
 5. Restart X-Plane. After rebuilding tiles that were already loaded, *Developer → Reload scenery* is enough.
 
 ### Scenery order
 
-In `Custom Scenery/scenery_packs.ini`, put `forest_colombia`:
+In `Custom Scenery/scenery_packs.ini`, put `forest_studio_xp`:
 
 - **below** airport and city packs (they bring their own trees, and ForestStudio's tiles would hide them);
 - **above** simHeaven X-World (`X-World_America-4-extras`, `-7-forests`) and your ortho tiles.
@@ -88,13 +89,17 @@ In `Custom Scenery/scenery_packs.ini`, put `forest_colombia`:
 On built tiles, ForestStudio's forests replace the forests of everything below them. Unbuilt tiles keep
 whatever forests you had before.
 
+Upgrading from a version with one pack per region (`forest_colombia`): ForestStudio moves your tiles into
+the new pack by itself and keeps your existing `forest_colombia` link pointing at it, so your scenery order
+stays as it is.
+
 ## Using the app
 
 | View | What it's for |
 |---|---|
 | **Build** | Map with tile status (selected, installed, built, outdated, data downloaded), the forest overlay preview, and the side tabs: **Tiles** (select, build, install, delete, tile info), **Profile** (performance settings, with Reset to defaults) and **Forest types** (which X-Plane forest grows in each biome and elevation band, plus plantations). |
 | **Build queue** | Every build or download job, with per-tile steps, progress, log and a final report. |
-| **Data** | What has been downloaded: the OpenStreetMap country file (check for and get newer map data), the biome map, and each tile's data. You can also download data for selected tiles without building them. |
+| **Data** | Your regions (add countries or states from Geofabrik's list; their map data downloads right away), each region's OpenStreetMap file (check for and get newer map data), the biome map, and each tile's data. You can also download data for selected tiles without building them. |
 | **Disk space** | How much space everything takes, and safe clean-ups. |
 | **Settings** | X-Plane folder, where ForestStudio keeps its data, setup checks and credits. |
 
@@ -112,7 +117,7 @@ The app runs these behind the scenes; they're also handy on their own:
 
 ```powershell
 .venv\Scripts\forest fetch --tiles +06-076,+06-075        # download data for tiles
-.venv\Scripts\forest build --tile +06-076 --profile medium --region colombia --compile
+.venv\Scripts\forest build --tile +06-076 --profile medium --compile   # uses the tile's own region
 .venv\Scripts\forest data osm --update                    # get a newer OpenStreetMap file
 .venv\Scripts\forest app                                  # open the app
 ```

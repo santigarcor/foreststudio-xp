@@ -95,8 +95,8 @@ def built_tile(sandbox, monkeypatch, real_rules):
 def test_build_tile_end_to_end(built_tile, sandbox):
     from forest.paths import studio_path
     txt = built_tile
-    assert txt.exists() and txt.parent.name == "studio_colombia"
-    stats = json.loads(studio_path("colombia", TILE, ".stats.json").read_text())
+    assert txt.exists() and txt.parent.name == "studio"
+    stats = json.loads(studio_path(TILE, ".stats.json").read_text())
     assert stats["polygons"] > 0 and stats["forest_km2"] > 1000
     assert set(stats["biome_km2"]) >= {"rainforest", "mangrove"}
     assert "oil_palm" in stats["plantation_km2"] and "no_trees" in stats["plantation_km2"]
@@ -105,7 +105,7 @@ def test_build_tile_end_to_end(built_tile, sandbox):
     assert stats["town_trees"] > 1000
     text = txt.read_text()
     assert "lib/g8/shrb_vhot_wet.for" in text                              # montane scrub
-    assert studio_path("colombia", TILE, ".overlay.png").exists()
+    assert studio_path(TILE, ".overlay.png").exists()
     text = txt.read_text()
     assert "PROPERTY sim/exclude_for -76.0000000/6.0000000/-75.0000000/7.0000000" in text
     assert "lib/vegetation/trees/palm/date_palm_small.for" in text          # oil palm plantation
@@ -150,7 +150,7 @@ def test_compile_with_real_dsftool(built_tile, sandbox):
         pytest.skip("bundled DSFTool not available on this platform")
     config.save(sandbox.xplane, real)
     from forest.paths import dsf_path
-    dsf = dsf_path("colombia", TILE)
+    dsf = dsf_path(TILE)
     assert cli.compile_dsf(built_tile, dsf) == 0
     assert dsf.exists() and dsf.stat().st_size > 1000
     assert not dsf.with_name(dsf.stem + ".building.dsf").exists()   # temp file swapped in
@@ -162,7 +162,7 @@ def test_outdated_detection(built_tile, sandbox):
 
     from forest.build import outdated_reasons
     from forest.paths import studio_path
-    stats = json.loads(studio_path("colombia", TILE, ".stats.json").read_text())
+    stats = json.loads(studio_path(TILE, ".stats.json").read_text())
     assert stats["fingerprint"] and "osm.json" in stats["data"]
     assert outdated_reasons(stats, TILE, "test", "colombia") == []               # just built
     assert "built with profile 'test'" in outdated_reasons(stats, TILE, "medium", "colombia")[0]

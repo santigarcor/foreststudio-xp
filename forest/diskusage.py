@@ -1,7 +1,7 @@
 """How much disk ForestStudio uses, by category, and safe clean-up actions.
 
 Everything lives in the data folder (~/.foreststudio: cache/ and out/). The X-Plane side is only a
-folder link to out/forest_<region>, so it takes no space of its own.
+folder link to out/forest_studio_xp, so it takes no space of its own.
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ def _leftovers() -> list[Path]:
         out += list((CACHE / "tiles").glob("*/base_mesh.txt*"))
         out += list((CACHE / "tiles").glob("*/osm.part"))
     if OUT.exists():
-        out += list(OUT.glob("studio_*/*.txt"))
-        out += list(OUT.glob("studio_*/*.raw"))
+        out += list(OUT.glob("studio/*.txt"))
+        out += list(OUT.glob("studio/*.raw"))
         out += list(OUT.glob("forest_*/Earth nav data/*/*.building.dsf"))
     return out
 
 
 def _unbuilt_tile_data() -> list[Path]:
-    """Downloaded data of tiles that have no built .dsf in any region's pack."""
+    """Downloaded data of tiles that have no built .dsf in the pack."""
     built = {p.stem for p in OUT.glob("forest_*/Earth nav data/*/*.dsf")} if OUT.exists() else set()
     tiles = CACHE / "tiles"
     return [p for p in tiles.iterdir() if p.is_dir() and p.name not in built] if tiles.exists() else []
@@ -76,7 +76,7 @@ def usage() -> dict:
         {"key": "built", "label": "Built tiles (the X-Plane pack)", "mb": _mb(sum(size_bytes(p) for p in OUT.glob("forest_*"))),
          "detail": f"{len(list(OUT.glob('forest_*/Earth nav data/*/*.dsf')))} .dsf tiles; X-Plane sees them through a link (no copy)",
          "path": str(OUT)},
-        {"key": "studio", "label": "App files (overlays, previews, stats)", "mb": _mb(sum(size_bytes(p) for p in OUT.glob("studio_*"))),
+        {"key": "studio", "label": "App files (overlays, previews, stats)", "mb": _mb(sum(size_bytes(p) for p in OUT.glob("studio*"))),
          "detail": "what the map overlay and Tile info show", "path": str(OUT)},
         {"key": "jobs", "label": "Job history and logs", "mb": _mb(size_bytes(CACHE / "jobs")),
          "detail": f"{len(list((CACHE / 'jobs').glob('*.json')))} saved jobs" if (CACHE / "jobs").exists() else "none",

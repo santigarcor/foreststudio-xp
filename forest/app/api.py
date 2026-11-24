@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -26,6 +27,14 @@ def _is_tile_in(name: str, region) -> bool:
         return False
 
 
+_COUNTRY_DL_RE = re.compile(r"OSM country file(?: missing)?: downloading (?P<url>\S+)")
+_READING_RE = re.compile(r"reading OpenStreetMap: (?P<file>\S+) \((?P<mb>\d+) MB\) for (?P<n>\d+) tile")
+_SAT_START_RE = re.compile(r"satellite maps: downloading for (?P<n>\d+) tile")
+_SAT_READY_RE = re.compile(r"[+-]\d{2}[+-]\d{3}: (rasters ready|data download FAILED)")
+_DL_DEFAULT = {"OSM": "the OpenStreetMap file", "ecoregions": "the biome map (Ecoregions 2017)"}
+_DOWNLOAD_RE = re.compile(r"download (?P<what>\w+): (?P<mb>\d+) MB(?: (?P<pct>\d+)%)?\s*$")
+
+
 class Job:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -41,6 +50,11 @@ class Job:
         self.active: set[str] = set()               # tiles currently building
         self.workers = 1
         self.record = None                          # forest.jobs.JobRecord (saved job)
+        self.region = ""                            # data jobs: the region whose files download
+        self.progress: dict | None = None           # current download: {"what", "mb", "pct"}
+        self.phase: str | None = None               # what the data step is doing, in plain words
+        self.dl_name = ""                           # the file being downloaded ("the OpenStreetMap file …")
+        self.sat = [0, 0]                           # satellite maps ready / tiles
 
     def claim(self) -> bool:
         """Mark a job as running unless one already is (one check-and-set under the lock:
@@ -64,6 +78,7 @@ class Api:
         from forest import jobs, migrate
 
         self.migration = migrate.run()   # one-time: old in-repo cache/out/settings -> ~/.foreststudio
+        self.migration += migrate.run_packs()   # one-time: per-region packs -> the one pack
         self.job = Job()
         jobs.mark_interrupted()     # jobs left "running" by a closed app
         self.reload()
@@ -183,19 +198,19 @@ class Api:
         win.destroy()
         return {"ok": True}
 
-    def setup_checks(self, region: str = "") -> dict:
+    def setup_checks(self) -> dict:
         """Status line like OrthoStudio's: how many required checks pass."""
         from forest import regions
         from forest.fetch import sources
         from forest.fetch.ecoregions import clipped_path
 
-        region = region or regions.default_name()
+        names = regions.names()
         items = {
             "X-Plane 12 folder": config.check_xplane(self.cfg.xplane_root)["ok"],
             "DSFTool": config.check_dsftool(self.cfg.dsftool)["ok"],
             "forest catalog": self.catalog_ok,
-            "OSM country extract": regions.get(region).osm_file.exists(),
-            "ecoregions map": clipped_path(region).exists() or sources.ecoregions_zip().exists(),
+            "OSM country extract": any(regions.get(n).osm_file.exists() for n in names),
+            "ecoregions map": sources.ecoregions_zip().exists() or any(clipped_path(n).exists() for n in names),
         }
         return {"items": items, "ok": sum(items.values()), "total": len(items)}
 
@@ -237,29 +252,37 @@ class Api:
         except (OSError, FileNotFoundError, ValueError):
             return []
 
-    def tile_status(self, region: str = "colombia", pack: str = "", profile: str = "") -> dict:
-        """Per tile: land / data cached / built / installed (= built and the region's
-        pack is linked into X-Plane), the last build's stats and, for built tiles, why they're
-        outdated compared with `profile` + the current forest types + the downloaded data."""
+    def tile_status(self, profile: str = "") -> dict:
+        """Every tile of every region: its region (whose forest types build it), land / data
+        cached / built / installed (= built and the pack is linked into X-Plane), the last
+        build's stats and, for built tiles, why they're outdated compared with `profile` + the
+        region's current forest types + the downloaded data."""
         from forest import regions
         from forest.build import Settings, outdated_reasons, settings_fingerprint
         from forest.pack import pack_status
         from forest.paths import dsf_path, studio_path
 
-        try:
-            fp = settings_fingerprint(Settings.load(profile, region)) if profile else None
-        except (OSError, ValueError):
-            fp = None
+        fps: dict[str, str | None] = {}
+
+        def fp_of(region: str) -> str | None:
+            if region not in fps:
+                try:
+                    fps[region] = settings_fingerprint(Settings.load(profile, region)) if profile else None
+                except (OSError, ValueError):
+                    fps[region] = None
+            return fps[region]
 
         xp = self.cfg.xplane_root
         gs = xp / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"
-        linked = pack_status(region)["installed"]
+        linked = pack_status()["installed"]
         out: dict[str, dict] = {}
-        for t in regions.get(region).tiles():
+        for name, region in regions.owners().items():
+            t = Tile.parse(name)
             c = CACHE / t.name
-            built = dsf_path(region, t).exists()
-            stats = studio_path(region, t, ".stats.json")
+            built = dsf_path(t).exists()
+            stats = studio_path(t, ".stats.json")
             s = {
+                "region": region,
                 "land": (gs / t.folder / f"{t.name}.dsf").exists(),
                 "cached": (c / "worldcover.tif").exists() and (c / "osm.json").exists(),
                 "built": built,
@@ -273,29 +296,30 @@ class Api:
                                   ("estimated_trees", "forest_km2", "polygons", "budget_scale", "profile", "seconds")}
                 except (OSError, ValueError):
                     j = None
-            if built and fp:
+            fp = fp_of(region) if built else None
+            if fp:
                 s["outdated"] = outdated_reasons(j, t, profile, region, fp)
             out[t.name] = s
         return out
 
     # ---------- X-Plane pack (one linked folder) ----------
-    def pack_status(self, region: str = "colombia") -> dict:
+    def pack_status(self) -> dict:
         from forest.pack import pack_status
-        return pack_status(region)
+        return pack_status()
 
-    def install_pack(self, region: str = "colombia") -> dict:
+    def install_pack(self) -> dict:
         from forest.pack import link_pack
         if self.job.running:
             return {"ok": False, "message": "a build is running; wait for it to finish"}
         try:
-            return link_pack(region)
+            return link_pack()
         except (OSError, RuntimeError) as exc:
             return {"ok": False, "message": str(exc)}
 
-    def uninstall_pack(self, region: str = "colombia") -> dict:
+    def uninstall_pack(self) -> dict:
         from forest.pack import unlink_pack
         try:
-            return unlink_pack(region)
+            return unlink_pack()
         except (OSError, RuntimeError) as exc:
             return {"ok": False, "message": str(exc)}
 
@@ -348,33 +372,33 @@ class Api:
             return {"ok": False, "error": str(exc)}
 
     # ---------- results ----------
-    def get_overlay(self, tile: str, region: str = "colombia") -> dict | None:
+    def get_overlay(self, tile: str) -> dict | None:
         t = Tile.parse(tile)
         from forest.paths import studio_path
-        png = studio_path(region, t, ".overlay.png")
+        png = studio_path(t, ".overlay.png")
         if not png.exists():
             return None
         return {"bounds": [[t.lat, t.lon], [t.lat + 1, t.lon + 1]],
                 "url": "data:image/png;base64," + base64.b64encode(png.read_bytes()).decode()}
 
-    def get_stats(self, tile: str, region: str = "colombia") -> dict | None:
+    def get_stats(self, tile: str) -> dict | None:
         t = Tile.parse(tile)
         from forest.paths import studio_path
-        p = studio_path(region, t, ".stats.json")
+        p = studio_path(t, ".stats.json")
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
     # ---------- deleting tiles ----------
-    def _tile_files(self, t: Tile, region: str) -> dict[str, list[Path]]:
+    def _tile_files(self, t: Tile) -> dict[str, list[Path]]:
         from forest.paths import dsf_path, studio_files
 
-        dsf = dsf_path(region, t)
+        dsf = dsf_path(t)
         cache = CACHE / t.name
         return {
-            "output": ([dsf] if dsf.exists() else []) + studio_files(region, t),
+            "output": ([dsf] if dsf.exists() else []) + studio_files(t),
             "cache": [cache] if cache.exists() and any(cache.iterdir()) else [],
         }
 
-    def delete_preview(self, tiles: list[str], region: str = "colombia", pack: str = "") -> dict:
+    def delete_preview(self, tiles: list[str]) -> dict:
         """What deleting these tiles would remove, per kind, with sizes (nothing is deleted)."""
 
         try:
@@ -383,15 +407,15 @@ class Api:
             return {"ok": False, "error": str(exc)}
         res = {k: {"tiles": 0, "mb": 0.0} for k in ("output", "cache")}
         for t in ts:
-            for kind, paths in self._tile_files(t, region).items():
+            for kind, paths in self._tile_files(t).items():
                 if paths:
                     res[kind]["tiles"] += 1
                     res[kind]["mb"] += sum(fsutil.size_mb(q) for q in paths)
         for v in res.values():
             v["mb"] = round(v["mb"], 1)
-        return {"ok": True, "tiles": len(ts), "pack_linked": self.pack_status(region)["installed"], **res}
+        return {"ok": True, "tiles": len(ts), "pack_linked": self.pack_status()["installed"], **res}
 
-    def delete_tiles(self, tiles: list[str], kinds: list[str], region: str = "colombia", pack: str = "") -> dict:
+    def delete_tiles(self, tiles: list[str], kinds: list[str]) -> dict:
         """Delete built tiles ('output': the .dsf in the pack + the app's files) and/or their
         downloaded data ('cache'). Only touches the data folder's out/ and cache/tiles/;
         the X-Plane side is just a link to out/, so a deleted tile disappears there too."""
@@ -411,7 +435,7 @@ class Api:
         allowed = [config.OUT_ROOT.resolve(), CACHE.resolve()]
         removed = {k: 0 for k in kinds}
         for t in ts:
-            files = self._tile_files(t, region)
+            files = self._tile_files(t)
             for kind in kinds:
                 for q in files[kind]:
                     where = q.parent.resolve() / q.name
@@ -423,7 +447,7 @@ class Api:
                         shutil.rmtree(q)
                 if files[kind]:
                     removed[kind] += 1
-            d = dsf_path(region, t).parent
+            d = dsf_path(t).parent
             try:
                 if d.exists() and not any(d.iterdir()):
                     d.rmdir()
@@ -432,8 +456,7 @@ class Api:
         return {"ok": True, "removed": removed}
 
     # ---------- estimates ----------
-    def estimate(self, tiles: list[str], region: str = "colombia", install: bool = True,
-                 pack: str = "", workers: int = 0) -> dict:
+    def estimate(self, tiles: list[str], workers: int = 0) -> dict:
         """Time and disk needed to build these tiles, from measured history (or defaults)."""
         import shutil
 
@@ -447,9 +470,9 @@ class Api:
         avg = history.averages()
         need_rasters = [t for t in ts if not (CACHE / t.name / "worldcover.tif").exists()]
         from forest import regions
-        need_osm = [t for t in ts if not is_current(t, regions.osm_sources(t, region) or None)]
+        need_osm = [t for t in ts if not is_current(t, regions.osm_sources(t) or None)]
         from forest.paths import dsf_path
-        new_out = [t for t in ts if not dsf_path(region, t).exists()]
+        new_out = [t for t in ts if not dsf_path(t).exists()]
         import math
 
         from forest.resources import DOWNLOAD_WORKERS
@@ -486,10 +509,10 @@ class Api:
         from forest.resources import auto_workers
         return auto_workers()
 
-    def start_build(self, tiles: list[str], profile: str, region: str, install: bool = False, pack: str = "",
-                    workers: int = 0) -> dict:
-        """`install` and `pack` are unused (kept so the page's call signature stays the same):
-        the pack is one linked folder, so every built tile is in X-Plane at once."""
+    def start_build(self, tiles: list[str], profile: str, workers: int = 0) -> dict:
+        """Build tiles of any regions together: each with its own region's forest types
+        (regions.owner). Every built tile goes into the one linked pack, so it's in X-Plane at once."""
+        from forest import regions
         if self.job.running:
             return {"ok": False, "error": "a build is already running"}
         try:
@@ -498,6 +521,10 @@ class Api:
             return {"ok": False, "error": str(exc)}
         if not names:
             return {"ok": False, "error": "select at least one tile"}
+        own = regions.owners()
+        outside = [x for x in names if x not in own]
+        if outside:
+            return {"ok": False, "error": f"no region covers {', '.join(outside)}: add it in Data → Regions"}
         info = self.parallel_info()
         n = int(workers) if workers and int(workers) > 0 else info["workers"]
         n = max(1, min(n, info["max"], len(names)))
@@ -508,19 +535,23 @@ class Api:
             return {"ok": False, "error": "a build is already running"}
         try:
             j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
-            j.current, j.workers = None, n
-            j.record = JobRecord.new(names, profile, region, n)
+            j.current, j.workers, j.region, j.progress = None, n, "", None
+            j.phase, j.dl_name, j.sat = None, "", [0, 0]
+            used = sorted({own[x] for x in names})
+            j.record = JobRecord.new(names, profile, ", ".join(regions.get(r).label for r in used), n)
             for t in names:
                 j.record.step(t, "data", "running")
-            threading.Thread(target=self._run, args=(names, profile, region, n), daemon=True).start()
+            owners = {x: own[x] for x in names}
+            threading.Thread(target=self._run, args=(names, profile, owners, n), daemon=True).start()
         except BaseException:
             j.running, j.record = False, None
             raise
         return {"ok": True, "workers": n, "job": j.record.id}
 
     # ---------- data (downloads without building) ----------
-    def data_status(self, region: str = "colombia") -> dict:
-        """Country-wide files and every tile's downloaded data (no network)."""
+    def data_status(self) -> dict:
+        """Country-wide files (each region's OSM file, the ecoregions map) and every tile's
+        downloaded data (no network)."""
         from forest import regions
         from forest.build import DATA_FILES
         from forest.fetch import sources
@@ -528,9 +559,15 @@ class Api:
         from forest.fetch.osm_pbf import is_current
         from forest.paths import dsf_path
 
-        osm = sources.status(sources.osm_file(region), sources.osm_url(region))
+        osm = {}
+        for n in regions.names():
+            try:
+                r = regions.get(n)
+            except ValueError:
+                continue
+            osm[n] = {**sources.status(r.osm_file, r.osm_url), "file": r.osm_file.name,
+                      "cutout": clipped_path(n).exists()}
         eco = sources.status(sources.ecoregions_zip(), sources.ECOREGIONS_URL)
-        eco["ready"] = clipped_path(region).exists()
 
         def _osm_stale(t, o_time):   # older than a file it comes from, or from other files
             if not o_time:
@@ -555,7 +592,7 @@ class Api:
                 "osm": files["osm.json"], "osm_date": o_time,
                 "osm_stale": _osm_stale(t, o_time),
                 "elevation": (d / "elevation_int16.npy").exists(),
-                "built": dsf_path(region, t).exists(),
+                "built": dsf_path(t).exists(),
             })
         return {"osm": osm, "ecoregions": eco, "tiles": tiles, "busy": self.job.running}
 
@@ -613,7 +650,10 @@ class Api:
             config.rules_path(r.name)          # forest types from the global defaults
         except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
-        return {"ok": True, "region": r.name, "tiles": len(r.tiles()), **self._regions_state()}
+        # Its data downloads right away (OSM file, ecoregions, cut-out); if something else is
+        # running, the Regions list offers the download afterwards.
+        dl = self.start_data_job("region", [], r.name)
+        return {"ok": True, "region": r.name, "tiles": len(r.tiles()), "download": dl, **self._regions_state()}
 
     def remove_region(self, name: str) -> dict:
         from forest import regions
@@ -632,8 +672,9 @@ class Api:
 
     def start_data_job(self, kind: str, tiles: list[str] | None = None, region: str = "colombia",
                        force: bool = False) -> dict:
-        """kind: 'tiles' (download data for these tiles), 'osm' (download/update the country
-        file and re-extract every tile that has OSM data), 'ecoregions'."""
+        """kind: 'tiles' (download data for these tiles), 'osm' (download/update the region's
+        country file and re-extract every tile that has OSM data), 'ecoregions', 'region'
+        (everything a newly added region needs: OSM file, ecoregions map, its cut-out)."""
         from forest.jobs import JobRecord
 
         if self.job.running:
@@ -645,7 +686,7 @@ class Api:
                 return {"ok": False, "error": str(exc)}
             if not names:
                 return {"ok": False, "error": "Select some tiles on the map first."}
-            args, rkind, label = ["fetch", "--tiles", ",".join(names), "--region", region], "data", "downloading data"
+            args, rkind, label = ["fetch", "--tiles", ",".join(names)], "data", "downloading data"
         elif kind == "osm":
             from forest import regions
             reg = regions.get(region)
@@ -653,6 +694,13 @@ class Api:
                      and _is_tile_in(d.name, reg)] if CACHE.exists() else []
             args = ["data", "osm", "--region", region, "--update"] + (["--force"] if force else [])
             rkind, label = "osm_update", "updating OSM data"
+        elif kind == "region":
+            from forest import regions
+            try:
+                label = f"downloading {regions.get(region).label}"
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            names, args, rkind = [], ["data", "region", "--region", region], "data"
         elif kind == "ecoregions":
             names, args, rkind, label = [], ["data", "ecoregions", "--region", region, "--update"], "data", "downloading ecoregions"
         else:
@@ -663,6 +711,9 @@ class Api:
         try:
             j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
             j.current, j.workers = label, 1
+            j.phase, j.dl_name, j.sat = None, "", [0, 0]
+            j.region = region if kind in ("osm", "region", "ecoregions") else ""
+            j.progress = None
             j.record = JobRecord.new(names, "", region, 1, kind=rkind)
             for t in names:
                 j.record.step(t, "data", "running")
@@ -707,6 +758,8 @@ class Api:
             current = ", ".join(sorted(j.active)) if j.active else j.current
         return {"running": j.running, "current": current, "done": j.done, "failed": j.failed,
                 "queue": j.queue, "lines": lines, "workers": j.workers,
+                "region": j.region if j.running else "", "progress": j.progress if j.running else None,
+                "phase": j.phase if j.running else None,
                 "job": j.record.id if j.record else None}
 
     def _step(self, args: list[str], tag: str = "", tail: list | None = None) -> int:
@@ -719,14 +772,30 @@ class Api:
                             text=True, encoding="utf-8", errors="replace")
         with self.job.lock:
             self.job.procs.add(proc)
+        logged = {}                        # download -> last 10 % step written to the log
         try:
             assert proc.stdout
             for line in proc.stdout:
                 if line.startswith(("Scanning for", "Got dimension", "Got entire", "Converting ", "Converted ")):
                     continue
+                m = _DOWNLOAD_RE.match(line)
+                if m:
+                    pct = int(m["pct"]) if m["pct"] else None
+                    self.job.progress = {"what": m["what"], "mb": int(m["mb"]), "pct": pct}
+                    if not tag:
+                        name = self.job.dl_name or _DL_DEFAULT.get(m["what"], m["what"])
+                        self._set_phase(f"Downloaded {name}" if pct == 100 else
+                                        f"Downloading {name}… {f'{pct} % ' if pct is not None else ''}({m['mb']} MB)",
+                                        note=True)
+                    if pct is not None:
+                        if logged.get(m["what"]) == pct // 10:
+                            continue        # the log keeps one line per 10 %; the page shows the rest
+                        logged[m["what"]] = pct // 10
                 self.job.add(prefix + line)
                 if self.job.record is not None:
                     self.job.record.track(tag, line)
+                if not tag and not m:
+                    self._data_phase(line.strip())
                 if tail is not None:
                     tail.append(line.rstrip())
                     del tail[:-40]
@@ -734,6 +803,37 @@ class Api:
         finally:
             with self.job.lock:
                 self.job.procs.discard(proc)
+
+    def _set_phase(self, text: str | None, note: bool = False) -> None:
+        """What the data step is doing now (Tiles tab, Data view); with `note`, also written on the
+        data step of every tile still waiting for it (Build queue)."""
+        j = self.job
+        j.phase = text
+        if note and text and j.record is not None:
+            j.record.data_note(text)
+
+    def _data_phase(self, text: str) -> None:
+        """Turn the data step's log lines into a plain-words phase (downloads keep their %)."""
+        j = self.job
+        if m := _COUNTRY_DL_RE.match(text):
+            j.dl_name = f"the OpenStreetMap file {m['url'].rsplit('/', 1)[-1]}"
+            self._set_phase(f"Downloading {j.dl_name}…", note=True)
+        elif text.startswith("ecoregions map missing: downloading"):
+            j.dl_name = _DL_DEFAULT["ecoregions"]
+            self._set_phase(f"Downloading {j.dl_name}…", note=True)
+        elif m := _SAT_START_RE.match(text):
+            j.sat = [0, int(m["n"])]
+            self._set_phase(f"Getting satellite maps for {m['n']} tile(s)…")
+        elif _SAT_READY_RE.match(text):
+            j.sat[0] += 1
+            self._set_phase(f"Satellite maps: {j.sat[0]} of {j.sat[1]} tile(s) done")
+        elif m := _READING_RE.match(text):
+            j.progress = None
+            self._set_phase(f"Reading OpenStreetMap ({m['file']}, {m['mb']} MB) for {m['n']} tile(s) — "
+                            "this can take a few minutes", note=True)
+        elif text.startswith(("OSM:", "ecoregions: ready")):
+            j.progress = None
+            self._set_phase(None)
 
     def _build_one(self, name: str, profile: str, region: str) -> None:
         j = self.job
@@ -751,7 +851,7 @@ class Api:
         try:
             rc = self._step(args, tag=name, tail=tail)
             if j.record is not None:
-                j.record.tile_finished(name, rc, tail, self._tile_result(name, region) if rc == 0 else None)
+                j.record.tile_finished(name, rc, tail, self._tile_result(name) if rc == 0 else None)
         except Exception as exc:  # noqa: BLE001 - report and carry on with the other tiles
             rc = 1
             err = f"{type(exc).__name__}: {exc}"
@@ -767,15 +867,15 @@ class Api:
                 (j.done if rc == 0 else j.failed).append(name)
         j.add(f"=== {name}: {'ok' if rc == 0 else ('cancelled' if j.cancel else f'failed (exit {rc})')} ===")
 
-    def _tile_result(self, name: str, region: str) -> dict:
+    def _tile_result(self, name: str) -> dict:
         from forest.paths import dsf_path
         t = Tile.parse(name)
-        st = self.get_stats(name, region) or {}
+        st = self.get_stats(name) or {}
         out = {k: st.get(k) for k in ("forest_km2", "estimated_trees", "polygons", "budget_scale", "seconds")}
-        out["dsf_mb"] = round(fsutil.size_mb(dsf_path(region, t)), 2)
+        out["dsf_mb"] = round(fsutil.size_mb(dsf_path(t)), 2)
         return out
 
-    def _run(self, names: list[str], profile: str, region: str, workers: int = 1) -> None:
+    def _run(self, names: list[str], profile: str, owners: dict[str, str], workers: int = 1) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         j = self.job
@@ -790,11 +890,11 @@ class Api:
                 j.add("cancelled")
                 return
             # 2) Build tiles, `workers` at a time; a failure doesn't stop the others.
-            j.current = None
+            j.current, j.phase, j.progress = None, None, None
             j.add(f"=== building {len(names)} tile(s), {workers} at a time ===")
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 for name in names:
-                    pool.submit(self._build_one, name, profile, region)
+                    pool.submit(self._build_one, name, profile, owners[name])
             if j.cancel:
                 j.add("cancelled — finished tiles are kept")
         finally:

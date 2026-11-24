@@ -1,11 +1,12 @@
-"""Install / uninstall a region's pack in X-Plane as ONE linked folder (like OrthoStudio).
+"""Install / uninstall ForestStudio's pack in X-Plane as ONE linked folder (like OrthoStudio).
 
-    X-Plane 12/Custom Scenery/forest_<region>  ──junction──▶  ~/.foreststudio/out/forest_<region>
+    X-Plane 12/Custom Scenery/forest_studio_xp  ──junction──▶  ~/.foreststudio/out/forest_studio_xp
 
 On Windows it's a directory junction (no admin rights or Developer Mode needed); on macOS and
-Linux a symbolic link. Every tile built into the
-data folder's pack is then in X-Plane at once; uninstalling removes only the junction,
-never ForestStudio's files. Only folders named forest_* are ever created or removed.
+Linux a symbolic link. Every built tile (any region) is then in X-Plane at once; uninstalling
+removes only the link, never ForestStudio's files. Only links named forest_* are ever created or
+removed. A link with an older name (forest_colombia, from when every region had its own pack)
+that points at the pack counts as installed: it keeps its place in scenery_packs.ini.
 """
 
 from __future__ import annotations
@@ -16,12 +17,7 @@ import stat
 from pathlib import Path
 
 from forest import config
-from forest.paths import pack_name, pack_root
-
-
-def _link_path(region: str, xplane_root: Path | None = None) -> Path:
-    root = xplane_root if xplane_root is not None else config.load().xplane_root
-    return root / "Custom Scenery" / pack_name(region)
+from forest.paths import PACK_NAME, pack_root
 
 
 def make_link(target: Path, link: Path) -> None:
@@ -56,36 +52,71 @@ def _is_junction(p: Path) -> bool:
         return False
 
 
-def _ini_line(region: str, xplane_root: Path | None = None) -> int | None:
-    """Line number of the pack in scenery_packs.ini (None if X-Plane doesn't list it yet)."""
-    root = xplane_root if xplane_root is not None else config.load().xplane_root
-    ini = root / "Custom Scenery" / "scenery_packs.ini"
+def link_target(link: Path) -> Path | None:
     try:
-        lines = ini.read_text(encoding="utf-8", errors="replace").splitlines()
+        return Path(os.path.realpath(link)).resolve()
     except OSError:
         return None
-    want = f"Custom Scenery/{pack_name(region)}/"
-    for i, ln in enumerate(lines, 1):
-        if ln.strip().split(" ", 1)[-1] == want and ln.startswith("SCENERY_PACK"):
+
+
+def _points_at(link: Path, target: Path) -> bool:
+    got = link_target(link)
+    try:
+        return got is not None and got == target.resolve()
+    except OSError:
+        return False
+
+
+def _custom_scenery(xplane_root: Path | None = None) -> Path:
+    root = xplane_root if xplane_root is not None else config.load().xplane_root
+    return root / "Custom Scenery"
+
+
+def our_links(xplane_root: Path | None = None) -> list[Path]:
+    """forest_* links in Custom Scenery that point at the pack (normally just forest_studio_xp,
+    or an older forest_<region> link re-pointed by migrate.run_packs). Sorted, ours first."""
+    cs, target = _custom_scenery(xplane_root), pack_root()
+    try:
+        found = [p for p in cs.glob("forest_*") if _is_junction(p) and _points_at(p, target)]
+    except OSError:
+        return []
+    return sorted(found, key=lambda p: (p.name != PACK_NAME, p.name))
+
+
+def _link_path(xplane_root: Path | None = None) -> Path:
+    """The pack's link: an existing one pointing at the pack, else Custom Scenery/forest_studio_xp."""
+    links = our_links(xplane_root)
+    return links[0] if links else _custom_scenery(xplane_root) / PACK_NAME
+
+
+def ini_lines(xplane_root: Path | None = None) -> list[str]:
+    root = xplane_root if xplane_root is not None else config.load().xplane_root
+    try:
+        return (root / "Custom Scenery" / "scenery_packs.ini").read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def ini_line(name: str, xplane_root: Path | None = None, lines: list[str] | None = None) -> int | None:
+    """Line number of a pack in scenery_packs.ini (negative = disabled; None = not listed)."""
+    want = f"Custom Scenery/{name}/"
+    for i, ln in enumerate(lines if lines is not None else ini_lines(xplane_root), 1):
+        if ln.startswith("SCENERY_PACK") and ln.strip().split(" ", 1)[-1] == want:
             return i if not ln.startswith("SCENERY_PACK_DISABLED") else -i
     return None
 
 
-def pack_status(region: str) -> dict:
+def pack_status() -> dict:
     xp = config.load().xplane_root   # read local.toml once (it may also run X-Plane detection)
-    link, target = _link_path(region, xp), pack_root(region)
+    link, target = _link_path(xp), pack_root()
     linked = _is_junction(link)
-    points_ok = False
-    if linked:
-        try:
-            points_ok = Path(os.path.realpath(link)).resolve() == target.resolve()
-        except OSError:
-            points_ok = False
-    line = _ini_line(region, xp)
+    points_ok = linked and _points_at(link, target)
+    line = ini_line(link.name, xp)
     tiles = sorted(p.stem for p in target.glob("Earth nav data/*/*.dsf")) if target.exists() else []
     return {
-        "pack": pack_name(region), "link": str(link), "target": str(target),
-        "installed": linked and points_ok, "linked_elsewhere": linked and not points_ok,
+        "pack": link.name, "link": str(link), "target": str(target),
+        "installed": points_ok, "linked_elsewhere": linked and not points_ok,
         "real_folder": link.exists() and not linked,
         "in_ini": line is not None and line > 0, "ini_disabled": line is not None and line < 0,
         "tiles": tiles,
@@ -120,17 +151,16 @@ def _absorb_real_folder(link: Path, target: Path) -> list[str]:
     return moved
 
 
-def link_pack(region: str) -> dict:
-    name = pack_name(region)
-    if not name.startswith("forest_"):
+def link_pack() -> dict:
+    link, target = _link_path(), pack_root()
+    if not link.name.startswith("forest_"):
         raise RuntimeError("only forest_* packs can be installed")
-    link, target = _link_path(region), pack_root(region)
     (target / "Earth nav data").mkdir(parents=True, exist_ok=True)
     from forest.credits import write_pack_credits
-    write_pack_credits(target, region)
-    st = pack_status(region)
+    write_pack_credits(target)
+    st = pack_status()
     if st["installed"]:
-        return {"ok": True, "message": f"{name} is already linked into X-Plane", **pack_status(region)}
+        return {"ok": True, "message": f"{link.name} is already linked into X-Plane", **st}
     moved = []
     if st["linked_elsewhere"]:
         remove_link(link)
@@ -140,17 +170,17 @@ def link_pack(region: str) -> dict:
     msg = f"linked {link} → {target}"
     if moved:
         msg += f" (moved {len(moved)} tile(s) that only existed in X-Plane into ForestStudio's data folder)"
-    return {"ok": True, "message": msg, **pack_status(region)}
+    return {"ok": True, "message": msg, **pack_status()}
 
 
-def unlink_pack(region: str) -> dict:
-    link = _link_path(region)
-    if not pack_name(region).startswith("forest_"):
-        raise RuntimeError("only forest_* packs can be uninstalled")
-    if _is_junction(link):
-        remove_link(link)  # the link only; ForestStudio's pack folder is untouched
-        return {"ok": True, "message": f"removed link {link} (built tiles kept)", **pack_status(region)}
+def unlink_pack() -> dict:
+    links = our_links()
+    if links:
+        for link in links:
+            remove_link(link)  # the link only; ForestStudio's pack folder is untouched
+        return {"ok": True, "message": f"removed link {links[0]} (built tiles kept)", **pack_status()}
+    link = _link_path()
     if link.exists():
         return {"ok": False, "message": f"{link} is a real folder, not a link; leaving it alone",
-                **pack_status(region)}
-    return {"ok": True, "message": "not installed", **pack_status(region)}
+                **pack_status()}
+    return {"ok": True, "message": "not installed", **pack_status()}

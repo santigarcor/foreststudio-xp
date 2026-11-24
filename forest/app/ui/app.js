@@ -52,23 +52,43 @@ function initMap() {
   $("#overlayOpacity").oninput = () => Object.values(overlays).forEach(o => o.setOpacity(+$("#overlayOpacity").value));
 }
 
-/* The selected region: its info from get_state, and the forest types it may use. */
+/* The map shows every region's tiles; each tile is built with the forest types of its own region
+   (status[tile].region). The Forest types tab edits one region's types at a time: region(). */
 const region = () => $("#region").value || S.default_region;
 const regionInfo = () => S.region_info[region()] || {};
+const regionLabel = (n) => (S.region_info[n] || {}).label || n;
 const mainAssets = () => (regionInfo().evergreen_only === false ? S.forests : S.evergreen);
 const allAssets = () => (regionInfo().evergreen_only === false ? S.forests_all : S.evergreen_all);
 
-function fitRegion() {
-  const [w, s, e, n] = regionInfo().bounds || [-82, -5, -66, 13];
+function fitRegion(name = S.default_region) {
+  const ri = S.region_info[name] || {};
+  if (ri.tiles && ri.tiles.length) {            // regions added from Geofabrik: their own tiles
+    const ll = ri.tiles.map(n => [parseInt(n.slice(0, 3), 10), parseInt(n.slice(3), 10)]);
+    const s = Math.min(...ll.map(x => x[0])), n = Math.max(...ll.map(x => x[0])) + 1;
+    const w = Math.min(...ll.map(x => x[1])), e = Math.max(...ll.map(x => x[1])) + 1;
+    map.fitBounds([[s, w], [n, e]]);
+    return;
+  }
+  const [w, s, e, n] = ri.bounds || [-82, -5, -66, 13];
   map.fitBounds([[s, w], [n, e]]);
 }
 
-/* Switching region: forget the old region's tiles, selection and overlays. */
-function clearTiles() {
-  for (const n of Object.keys(rects)) { map.removeLayer(rects[n]); delete rects[n]; }
-  for (const n of Object.keys(labels)) { map.removeLayer(labels[n]); delete labels[n]; }
-  for (const n of Object.keys(overlays)) reloadOverlay(n);
-  selected.clear(); lastClicked = null;
+/* The list of regions changed (added / removed): tiles that no region offers any more go away. */
+function dropTiles(keep) {
+  for (const n of Object.keys(rects)) if (!keep[n]) {
+    map.removeLayer(rects[n]); delete rects[n];
+    map.removeLayer(labels[n]); delete labels[n];
+    reloadOverlay(n); selected.delete(n);
+  }
+}
+
+async function fillRegionSelects() {
+  await fillSelect("#region", S.regions, S.regions.includes(region()) ? region() : S.default_region, regionLabel);
+  const go = $("#goRegion"), keep = go.value;
+  go.innerHTML = "";
+  go.append(el("option", { value: "" }, "Go to region…"));
+  for (const n of S.regions) go.append(el("option", { value: n }, regionLabel(n)));
+  go.value = S.regions.includes(keep) ? keep : "";
 }
 
 function tileStyle(name) {
@@ -129,7 +149,7 @@ async function refreshOverlays() {
   const show = $("#showOverlay").checked;
   for (const [n, s] of Object.entries(status)) {
     if (show && s.built && !overlays[n]) {
-      const o = await api().get_overlay(n, $("#region").value);
+      const o = await api().get_overlay(n);
       if (o) overlays[n] = L.imageOverlay(o.url, o.bounds,
         { opacity: +$("#overlayOpacity").value, interactive: false, pane: "forest" }).addTo(map);
     }
@@ -175,7 +195,8 @@ async function reloadOverlay(name) {
 }
 
 async function refreshStatus() {
-  status = await api().tile_status($("#region").value, "", $("#profile").value);
+  status = await api().tile_status($("#profile").value);
+  dropTiles(status);
   await refreshPack();
   drawTiles();
   await refreshOverlays();
@@ -197,7 +218,7 @@ function renderSelection() {
 async function openDelete() {
   const tiles = [...selected].filter(n => status[n] && (status[n].built || status[n].installed || status[n].cached)).sort();
   if (!tiles.length) return;
-  const pv = await api().delete_preview(tiles, $("#region").value);
+  const pv = await api().delete_preview(tiles);
   if (!pv.ok) { alert(pv.error); return; }
   $("#delTitle").textContent = `Delete ${tiles.length} tile${tiles.length > 1 ? "s" : ""}`;
   $("#delTiles").textContent = tiles.join(", ");
@@ -216,7 +237,7 @@ async function openDelete() {
     const kinds = [["#delOutput", "output"], ["#delCache", "cache"]]
       .filter(([id]) => $(id).checked).map(([, k]) => k);
     if (!kinds.length) { msg("#delMsg", "Choose at least one thing to delete.", true); return; }
-    const r = await api().delete_tiles(tiles, kinds, $("#region").value);
+    const r = await api().delete_tiles(tiles, kinds);
     if (!r.ok) { msg("#delMsg", r.error, true); return; }
     $("#delModal").classList.add("hidden");
     for (const t of tiles) await reloadOverlay(t);
@@ -228,14 +249,17 @@ async function openDelete() {
 
 let packLinked = false;
 async function refreshPack() {
-  const p = await api().pack_status($("#region").value);
+  const p = await api().pack_status();
   packLinked = p.installed;
   const box = $("#packBox"); box.innerHTML = "";
   const state = p.installed ? "Installed — linked into X-Plane"
     : p.real_folder ? "An old copied pack folder is in X-Plane (Install converts it to a link)"
     : p.linked_elsewhere ? "Linked to a different folder (Install fixes it)" : "Not installed";
   box.append(el("div", {}, el("b", {}, p.pack), ` · ${state}`),
-    el("div", { class: "hint" }, `${p.tiles.length} built tile(s) in the pack. X-Plane folder: ${p.link}`));
+    el("div", { class: "hint" }, `${p.tiles.length} built tile(s) of all your regions in one pack. X-Plane folder: ${p.link}`));
+  if (p.installed && p.pack !== "forest_studio_xp")
+    box.append(el("div", { class: "hint" }, `It keeps its older name ${p.pack} so it stays at the same place in `
+      + "your scenery order; it now holds every region's tiles."));
   if (p.installed && !p.in_ini)
     box.append(el("div", { class: "warn" }, p.ini_disabled
       ? "The pack is disabled in scenery_packs.ini — enable it there."
@@ -268,8 +292,7 @@ function updateEstimate() {
     const box = $("#estimate");
     const tiles = [...selected];
     if (!tiles.length) { box.classList.add("hidden"); lastEstimate = null; return; }
-    const e = await api().estimate(tiles, $("#region").value, true, "",
-      +$("#workers").value || 0);
+    const e = await api().estimate(tiles, +$("#workers").value || 0);
     if (!e.ok) { box.classList.add("hidden"); return; }
     lastEstimate = e;
     const disk = e.cache_mb + e.out_mb;
@@ -293,7 +316,8 @@ function updateEstimate() {
 
 async function showTileInfo(name) {
   const s = status[name] || {};
-  const flags = [["Land tile (base mesh)", s.land], ["Data cached", s.cached],
+  const flags = [["Forest types", s.region ? regionLabel(s.region) : false],
+    ["Land tile (base mesh)", s.land], ["Data cached", s.cached],
     ["Built", s.built],
     ["Up to date", !s.built ? false : (s.outdated && s.outdated.length ? "no — " + s.outdated.join("; ") : "yes")],
     ["In X-Plane", s.installed ? "yes (pack linked)" : (s.built ? "no — pack not installed" : false)]];
@@ -302,7 +326,12 @@ async function showTileInfo(name) {
   const t = el("table");
   for (const [k, v] of flags) t.append(el("tr", {}, el("td", {}, k), el("td", {}, typeof v === "string" ? v : v ? "yes" : "–")));
   info.append(t);
-  const st = await api().get_stats(name, $("#region").value);
+  if (s.region) {
+    const edit = el("a", { class: "link", href: "#" }, `Edit ${regionLabel(s.region)}'s forest types →`);
+    edit.onclick = async (ev) => { ev.preventDefault(); await useRules(s.region); showTab("types"); };
+    info.append(el("div", {}, edit));
+  }
+  const st = await api().get_stats(name);
   if (st) {
     const t2 = el("table");
     const rows = [["Profile", st.profile], ["Forest area (km²)", fmt(st.forest_km2)], ["Polygons", fmt(st.polygons)],
@@ -403,9 +432,21 @@ async function saveProfile(name) {
 }
 
 /* ---------------- forest types ---------------- */
+let rulesRegion = null, rulesSaved = null;
+const rulesDirty = () => rules && rulesSaved !== null && JSON.stringify(rules) !== rulesSaved;
+
+/* Show (and edit) another region's forest types. */
+async function useRules(name) {
+  $("#region").value = name;
+  S.ecoregions = await api().ecoregion_names(name);
+  await loadRules();
+}
+
 async function loadRules() {
-  rules = await api().get_rules($("#region").value);
-  $("#rulesTitle").textContent = `Forest types: ${$("#region").value}`;
+  rulesRegion = region();
+  rules = await api().get_rules(rulesRegion);
+  rulesSaved = JSON.stringify(rules);
+  $("#rulesTitle").textContent = `Forest types: ${regionLabel(region())}`;
   renderRules(); renderForestLegend(); msg("#rulesMsg", "");
 }
 
@@ -590,8 +631,7 @@ async function startBuild() {
     if (!confirm(`Build ${tiles.length} tiles?\n\nEstimated time: ${fmtDur(e.seconds)}\nNew disk use: ${fmtMB(disk)}\n\n`
       + "You can cancel at any time; finished tiles are kept.")) return;
   }
-  const r = await api().start_build(tiles, $("#profile").value, $("#region").value, false, "",
-    +$("#workers").value || 0);
+  const r = await api().start_build(tiles, $("#profile").value, +$("#workers").value || 0);
   if (!r.ok) { alert(r.error); return; }
   window._buildTotal = tiles.length;
   if (r.job && typeof selectedJob !== "undefined") selectedJob = r.job;   // Build queue opens this run
@@ -616,8 +656,12 @@ async function poll() {
   for (const ln of j.lines) logSeq = Math.max(logSeq, +ln.split("\t")[0]);
   const total = window._buildTotal || 1, n = j.done.length + j.failed.length;
   $("#progress div").style.width = `${100 * n / total}%`;
+  // While data is fetched, say what exactly (satellite maps, the OSM country file with its %, the OSM pass).
+  const doing = j.phase ? j.phase
+    : /^(download|updat)/.test(j.current || "") ? j.current[0].toUpperCase() + j.current.slice(1)
+    : `Building ${j.current || "…"}`;
   $("#progressText").textContent = j.running
-    ? `${/^(download|updat)/.test(j.current || "") ? j.current[0].toUpperCase() + j.current.slice(1) : `Building ${j.current || "…"}`} · ${n}/${total} done${j.failed.length ? ` · ${j.failed.length} failed` : ""}`
+    ? `${doing} · ${n}/${total} done${j.failed.length ? ` · ${j.failed.length} failed` : ""}`
     : (n ? `Finished: ${j.done.length} ok${j.failed.length ? `, ${j.failed.length} failed` : ""}` : "");
   if (j.running && j.workers > 1) $("#progressText").textContent += ` · ${j.workers} at a time`;
   const sbJob = $("#sbJob");
@@ -665,7 +709,7 @@ async function init() {
   S = await api().get_state();
   badges();
   await fillSelect("#profile", S.profiles, "medium");
-  await fillSelect("#region", S.regions, S.default_region, (n) => (S.region_info[n] || {}).label || n);
+  await fillRegionSelects();
   initMap();
   await Promise.all([loadProfile(), loadRules()]);
   await refreshStatus();
@@ -678,18 +722,19 @@ async function init() {
     await refreshStatus();
   };
   $("#region").onchange = async () => {
-    clearTiles(); fitRegion(); renderSelection();
-    S.ecoregions = await api().ecoregion_names(region());
-    await loadRules(); await refreshStatus();
+    const want = region();
+    if (rulesDirty() && !confirm("Discard unsaved forest-type changes?")) { $("#region").value = rulesRegion; return; }
+    await useRules(want);
   };
+  $("#goRegion").onchange = () => { if ($("#goRegion").value) fitRegion($("#goRegion").value); $("#goRegion").value = ""; };
   $("#packInstall").onclick = async () => {
-    const r = await api().install_pack($("#region").value);
+    const r = await api().install_pack();
     msg("#packMsg", r.message, !r.ok); await refreshStatus(); updateEstimate();
   };
   $("#packUninstall").onclick = async () => {
     if (!confirm("Remove the forest pack from X-Plane? Your built tiles are kept; "
       + "X-Plane shows X-World / default forests again after a restart.")) return;
-    const r = await api().uninstall_pack($("#region").value);
+    const r = await api().uninstall_pack();
     msg("#packMsg", r.message, !r.ok); await refreshStatus(); updateEstimate();
   };
   $("#workers").onchange = updateEstimate;
@@ -706,13 +751,13 @@ async function init() {
     msg("#profMsg", `Loaded the default values of the '${d.base}' profile. Press Save to keep them, or Revert to undo.`);
   };
   $("#rulesDefaults").onclick = async () => {
-    const d = await api().default_rules($("#region").value);
+    const d = await api().default_rules(region());
     if (!d.ok) return msg("#rulesMsg", d.error, true);
     rules = d.rules; curBiome = 0; renderRules(); renderForestLegend();
     msg("#rulesMsg", "Loaded the default forest types. Press Save to keep them, or Revert to undo.");
   };
   $("#rulesSave").onclick = async () => {
-    const r = await api().save_rules($("#region").value, rules);
+    const r = await api().save_rules(region(), rules);
     if (r.ok) { msg("#rulesMsg", "Saved."); loadRules(); refreshStatus(); } else msg("#rulesMsg", r.error, true);
   };
   $("#addPlant").onclick = () => {

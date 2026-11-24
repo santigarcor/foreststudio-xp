@@ -102,8 +102,10 @@ def check(folder: str) -> dict:
             "same_drive": same_drive, "note": note, "message": msg}
 
 
-def _links_into(out_dir: Path) -> list[Path]:
-    """ForestStudio's own X-Plane links (Custom Scenery/forest_*) pointing into out_dir."""
+def _links_into(out_dir: Path) -> list[tuple[Path, str]]:
+    """ForestStudio's own X-Plane links (Custom Scenery/forest_*) pointing into out_dir, each with
+    the name of the folder it points at (a link may be named forest_colombia but point at
+    forest_studio_xp)."""
     from forest import pack
 
     found = []
@@ -117,22 +119,22 @@ def _links_into(out_dir: Path) -> list[Path]:
                 t = Path(os.path.realpath(link)).resolve()
             except OSError:
                 continue
-            if t == old / link.name or old in t.parents:
-                found.append(link)
+            if old in t.parents:
+                found.append((link, t.relative_to(old).parts[0]))
     except OSError:
         pass
     return found
 
 
-def repoint_links(links: list[Path], new_out: Path) -> list[str]:
-    """Point each forest_* junction at new_out/<its name>. Only our own forest_* links."""
+def repoint_links(links: list[tuple[Path, str]], new_out: Path) -> list[str]:
+    """Point each forest_* junction at the same folder in new_out. Only our own forest_* links."""
     from forest import pack
 
     notes = []
-    for link in links:
+    for link, name in links:
         if not link.name.startswith("forest_"):
             continue
-        target = new_out / link.name
+        target = new_out / name
         if not target.is_dir():
             notes.append(f"{link.name}: nothing to link in the new folder; left as it was")
             continue

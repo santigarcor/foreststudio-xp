@@ -82,29 +82,37 @@ def by_file_name() -> dict[str, dict]:
 
 
 @lru_cache(maxsize=64)
-def _tiles_of(eid: str, index: str, mtime_ns: int) -> frozenset[str]:
+def _shares(eid: str, index: str, mtime_ns: int) -> dict[str, float]:
     from shapely.geometry import box, shape
     from shapely.prepared import prep
 
     from forest.tiles import Tile
 
     g = shape(entries()[eid]["geometry"])
+    if not g.is_valid:
+        g = g.buffer(0)
     pg = prep(g)
     w, s, e, n = g.bounds
-    out = set()
+    out = {}
     for lat in range(math.floor(s), math.ceil(n)):
         for lon in range(math.floor(w), math.ceil(e)):
-            if -90 <= lat < 90 and -180 <= lon < 180 and pg.intersects(box(lon, lat, lon + 1, lat + 1)):
-                out.add(Tile(lat, lon).name)
-    return frozenset(out)
+            b = box(lon, lat, lon + 1, lat + 1)
+            if -90 <= lat < 90 and -180 <= lon < 180 and pg.intersects(b):
+                out[Tile(lat, lon).name] = round(g.intersection(b).area, 6)
+    return out
+
+
+def tile_shares(eid: str) -> dict[str, float]:
+    """1° tiles the extract's outline touches → how much of the tile it covers (0–1)."""
+    p = index_path()
+    if eid not in entries():
+        return {}
+    return _shares(eid, str(p), p.stat().st_mtime_ns)
 
 
 def tiles_of(eid: str) -> frozenset[str]:
     """Names of the 1° tiles the extract's outline touches."""
-    p = index_path()
-    if eid not in entries():
-        return frozenset()
-    return _tiles_of(eid, str(p), p.stat().st_mtime_ns)
+    return frozenset(tile_shares(eid))
 
 
 # ---------- regions made from an extract ----------

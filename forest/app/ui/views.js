@@ -43,7 +43,7 @@ async function refreshStatusbarDisk() {
 }
 
 /* ---------------- Build queue ---------------- */
-const KIND_TXT = { data: "Download data", osm_update: "Update OSM data" };   // build jobs show the profile
+const KIND_TXT = { data: "Download data", osm_update: "Update OSM data" };   // j.region = the regions' labels   // build jobs show the profile
 const STATUS_TXT = { running: "running", done: "done", partial: "partly failed", failed: "failed",
   cancelled: "cancelled", interrupted: "interrupted" };
 const fmtTime = (t) => new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
@@ -180,73 +180,48 @@ const fmtWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: "m
 let dataChecked = new Set();
 
 async function startDataJob(kind, tiles, force, regionName) {
-  const r = await api().start_data_job(kind, tiles || [], regionName || $("#region").value || S.default_region, !!force);
+  const r = await api().start_data_job(kind, tiles || [], regionName || S.default_region, !!force);
   if (!r.ok) { msg("#dataMsg2", r.error, true); return r; }
-  window._buildTotal = Math.max(1, r.tiles);
-  if (typeof setRunning === "function") setRunning(true);
-  if (typeof poll === "function") poll();
+  dataJobStarted(r);
   msg("#dataMsg2", "Started. Progress and log are in the Build queue.");
-  refreshData();
-  waitForDataJob();
   return r;
 }
 
-async function waitForDataJob() {   // refresh this page when the download finishes
+function dataJobStarted(r) {   // a download job is running: progress bar, refresh when it ends
+  window._buildTotal = Math.max(1, r.tiles);
+  if (typeof setRunning === "function") setRunning(true);
+  if (typeof poll === "function") poll();
+  refreshData();
+  watchDataJob();
+}
+
+let dataWatching = false;
+function watchDataJob() { if (!dataWatching) { dataWatching = true; waitForDataJob(); } }
+
+async function waitForDataJob() {   // live progress in the region's row; refresh when it finishes
   let j;
   try { j = await api().job_status(1e12); }
   catch (e) { setTimeout(waitForDataJob, 3000); return; }   // keep waiting after a failed call
-  if (j.running) { setTimeout(waitForDataJob, 2000); return; }
+  if (j.running) { showRegionProgress(j); setTimeout(waitForDataJob, 1000); return; }
+  dataWatching = false;
   if (currentView === "data") refreshData();
   if (typeof refreshStatus === "function") refreshStatus();
 }
 
 async function refreshData() {
-  const d = await api().data_status($("#region").value || S.default_region);
+  const d = await api().data_status();
   const busyNow = d.busy;
-  renderRegions(busyNow);
-  const regionLabel = (S.region_info[$("#region").value || S.default_region] || {}).label || "";
-  // OpenStreetMap card
-  const o = d.osm, oc = $("#dcOsm"); oc.innerHTML = "";
-  oc.append(el("h3", {}, `OpenStreetMap (${regionLabel}, Geofabrik file)`));
-  oc.append(el("p", { class: "hint" }, "Roads, buildings, water, airports, parks, single trees and plantations. "
-    + "Read once for all tiles of a build."));
-  if (o.exists) {
-    oc.append(el("div", {}, `${fmtMB(o.mb)} · ${o.remote_date ? `map data from ${fmtWhen(o.remote_date)} · ` : ""}downloaded ${fmtWhen(o.downloaded)}`));
-    const chk = el("button", { class: "ghost" }, "Check for update");
-    const upd = el("button", { class: "primary hidden" }, "Update OSM data");
-    const res = el("div", { class: "hint" });
-    chk.disabled = upd.disabled = busyNow;
-    chk.onclick = () => busy(chk, "Checking…", async () => {
-      const r = await api().check_osm_update($("#region").value || S.default_region);
-      if (!r.ok) { res.className = "hint err"; res.textContent = r.error; return; }
-      res.className = "hint";
-      if (r.newer) {
-        res.textContent = `A newer file is available: map data from ${fmtWhen(r.remote_date)}${r.remote_size ? ` (${fmtMB(r.remote_size / 1e6)})` : ""}.`;
-        upd.classList.remove("hidden");
-      } else res.textContent = "You have the newest file.";
-    });
-    upd.onclick = () => {
-      const n = d.tiles.filter(t => t.osm).length;
-      if (!confirm(`Download the newer OpenStreetMap file and re-read it for ${n} tile(s)?\n\n`
-        + "This takes a few minutes. Built tiles then show as outdated until you rebuild them "
-        + "(Build → Select outdated).")) return;
-      busy(upd, "Starting…", () => startDataJob("osm"));
-    };
-    oc.append(el("div", { class: "row" }, chk, upd), res);
-  } else {
-    oc.append(el("div", { class: "hint err" }, "Not downloaded yet (Colombia is about 335 MB). It's downloaded automatically on the first build."));
-    const dl = el("button", { class: "primary" }, "Download now");
-    dl.disabled = busyNow;
-    dl.onclick = () => busy(dl, "Starting…", () => startDataJob("osm"));
-    oc.append(el("div", { class: "row" }, dl));
-  }
+  try { d.job = await api().job_status(1e12); } catch (e) { d.job = null; }
+  if (d.job && d.job.running && d.job.region) watchDataJob();   // e.g. opened while it runs
+  renderRegions(busyNow, d);
   // Ecoregions card
   const e = d.ecoregions, ec = $("#dcEco"); ec.innerHTML = "";
   ec.append(el("h3", {}, "Ecoregions (biomes)"));
   ec.append(el("p", { class: "hint" }, "RESOLVE Ecoregions 2017: decides which forest type (rainforest, montane, dry forest…) grows where."));
-  if (e.exists || e.ready) {
-    ec.append(el("div", {}, e.exists ? `${fmtMB(e.mb)} · downloaded ${fmtDay(e.downloaded)}${e.ready ? "" : ` · the ${S.region_info[$("#region").value || S.default_region].label} cut-out is made on the next build`}`
-      : `${S.region_info[$("#region").value || S.default_region].label} cut-out ready`));
+  const cut = Object.entries(d.osm).filter(([, o]) => o.cutout).map(([n]) => regionLabel(n));
+  if (e.exists || cut.length) {
+    ec.append(el("div", {}, (e.exists ? `${fmtMB(e.mb)} · downloaded ${fmtDay(e.downloaded)}` : "World map deleted")
+      + (cut.length ? ` · cut out for ${cut.join(", ")}` : "")));
   } else {
     ec.append(el("div", { class: "hint err" }, "Not downloaded yet (about 150 MB). It's downloaded automatically on the first build."));
     const dl = el("button", { class: "primary" }, "Download now");
@@ -296,46 +271,100 @@ let geo = null;                       // geofabrik_list() result
 const geoSizes = {};                  // extract id -> MB
 let geoContinent = "", geoFilter = "";
 
-/* After adding / removing a region: new region list in the picker (keeps the current one). */
+/* After adding / removing a region: new region lists, new tiles on the map. */
 async function applyRegions(r) {
   S.regions = r.regions; S.region_info = r.region_info; S.default_region = r.default_region;
-  const cur = $("#region").value;
-  await fillSelect("#region", S.regions, S.regions.includes(cur) ? cur : S.default_region,
-    (n) => (S.region_info[n] || {}).label || n);
-  if (cur !== $("#region").value) $("#region").onchange();
+  const cur = region();
+  await fillRegionSelects();
+  if (cur !== region()) await useRules(region());   // its region was removed
+  if (typeof refreshStatus === "function") await refreshStatus();
 }
 
 function useRegion(name) {
-  $("#region").value = name;
-  $("#region").onchange();
   showView("build");
+  setTimeout(() => fitRegion(name), 80);
 }
 
-async function renderRegions(busyNow) {
+/* What a running download job is doing for a region, e.g. "Downloading the OpenStreetMap file… 45 %". */
+const DL_WHAT = { OSM: "the OpenStreetMap file", ecoregions: "the biome map" };
+function regionProgress(j) {
+  const p = j.progress;
+  if (j.phase) return { text: j.phase, pct: p && p.pct != null && /^Download/.test(j.phase) ? p.pct : null };
+  if (!p) return { text: `${(j.current || "Downloading")[0].toUpperCase()}${(j.current || "downloading").slice(1)}…`, pct: null };
+  const what = DL_WHAT[p.what] || p.what;
+  if (p.pct === 100) return { text: `Downloaded ${what} · getting it ready…`, pct: 100 };
+  return { text: `Downloading ${what}… ${p.pct != null ? `${p.pct} %` : ""} (${fmtMB(p.mb)})`, pct: p.pct };
+}
+
+function showRegionProgress(j) {   // updates the row in place (no re-render) while the job runs
+  const box = document.getElementById("regprog-" + j.region);
+  if (!box) return;
+  const r = regionProgress(j);
+  box.querySelector(".ptext").textContent = r.text;
+  const bar = box.querySelector(".progress div");
+  bar.style.width = r.pct == null ? "100%" : `${r.pct}%`;
+  bar.parentElement.classList.toggle("indet", r.pct == null);
+}
+
+/* One region's OpenStreetMap file: size, dates, Download / Check for update / Update — or, while
+   its download runs, what is being downloaded and how far it is. */
+function osmCell(n, o, busyNow, job) {
+  const td = el("td", {});
+  if (!o) return td;
+  if (job && job.running && job.region === n) {
+    const box = el("div", { id: "regprog-" + n, class: "regprog" },
+      el("div", { class: "ptext" }), el("div", { class: "progress" }, el("div")));
+    td.append(box);
+    setTimeout(() => showRegionProgress(job), 0);
+    return td;
+  }
+  if (o.exists) {
+    td.append(el("div", {}, `${fmtMB(o.mb)} · ${o.remote_date ? `map data from ${fmtDay(o.remote_date)}` : `downloaded ${fmtDay(o.downloaded)}`}`));
+    const chk = el("button", { class: "ghost small" }, "Check for update");
+    const upd = el("button", { class: "primary small hidden" }, "Update");
+    const res = el("span", { class: "hint" });
+    chk.disabled = upd.disabled = busyNow;
+    chk.onclick = () => busy(chk, "Checking…", async () => {
+      const r = await api().check_osm_update(n);
+      if (!r.ok) { res.className = "hint err"; res.textContent = r.error; return; }
+      res.className = "hint";
+      if (r.newer) {
+        res.textContent = ` newer: ${fmtDay(r.remote_date)}${r.remote_size ? ` (${fmtMB(r.remote_size / 1e6)})` : ""}`;
+        upd.classList.remove("hidden");
+      } else res.textContent = " you have the newest file";
+    });
+    upd.onclick = () => {
+      if (!confirm(`Download the newer OpenStreetMap file of ${regionLabel(n)} and re-read it for the tiles that use it?\n\n`
+        + "Built tiles then show as outdated until you rebuild them (Build → Select outdated).")) return;
+      busy(upd, "Starting…", () => startDataJob("osm", [], false, n));
+    };
+    td.append(el("div", { class: "row" }, chk, upd, res));
+  } else {
+    td.append(el("div", { class: "hint err" }, "not downloaded"));
+    const dl = el("button", { class: "primary small" }, "Download");
+    dl.disabled = busyNow;
+    dl.onclick = () => busy(dl, "Starting…", () => startDataJob("region", [], false, n));
+    td.append(el("div", { class: "row" }, dl));
+  }
+  return td;
+}
+
+async function renderRegions(busyNow, d) {
   const box = $("#dataRegions");
   if (!geo) geo = await api().geofabrik_list();
   box.innerHTML = "";
   box.append(el("h3", {}, "Regions"));
   // Your regions
   const mine = el("table", { class: "datatable" },
-    el("tr", {}, ...["Region", "Tiles", "Forest types", "OpenStreetMap", ""].map(h => el("th", {}, h))));
-  const added = {};
-  for (const e of geo.entries || []) if (e.added) added[e.added.region] = e;
+    el("tr", {}, ...["Region", "Tiles", "Forest types", "OpenStreetMap file", ""].map(h => el("th", {}, h))));
   for (const n of S.regions) {
     const ri = S.region_info[n] || {};
     const [w, s, e, nn] = ri.bounds || [0, 0, 0, 0];
     const ntiles = ri.tiles ? ri.tiles.length : (e - w) * (nn - s);
-    const g = added[n];
     const acts = el("div", { class: "row" });
     const use = el("button", { class: "ghost" }, "Show on map");
     use.onclick = () => useRegion(n);
     acts.append(use);
-    if (g && !g.added.downloaded) {
-      const dl = el("button", { class: "ghost" }, "Download OSM");
-      dl.disabled = busyNow;
-      dl.onclick = () => busy(dl, "Starting…", () => startDataJob("osm", [], false, n));
-      acts.append(dl);
-    }
     if (ri.user) {
       const rm = el("button", { class: "ghost danger" }, "Remove");
       rm.disabled = busyNow;
@@ -350,25 +379,24 @@ async function renderRegions(busyNow) {
       };
       acts.append(rm);
     }
-    const osmText = g ? (g.added.downloaded ? `downloaded${g.size ? ` · ${fmtMB(g.size / 1e6)}` : ""}` : "not downloaded")
-      : "see the OpenStreetMap card";
     mine.append(el("tr", {}, el("td", {}, ri.label || n), el("td", {}, String(ntiles)),
       el("td", {}, ri.evergreen_only === false ? "seasonal allowed" : "evergreen only"),
-      el("td", {}, osmText), el("td", {}, acts)));
+      osmCell(n, d && d.osm[n], busyNow, d && d.job), el("td", {}, acts)));
   }
   box.append(mine);
 
   // Add a region from Geofabrik's list
   box.append(el("h4", {}, "Add a region"));
   box.append(el("p", { class: "hint" }, "Pick a country or state from Geofabrik's list of OpenStreetMap downloads. "
-    + "The region gets the 1° tiles its outline touches and default forest types by biome (edit them in Build → "
-    + "Forest types). Regions between the tropics use evergreen trees only."));
+    + "Its map data downloads right away; then its tiles appear on the Build map next to your other regions. "
+    + "It gets default forest types by biome (edit them in Build → Forest types). Regions between the tropics "
+    + "use evergreen trees only."));
   if (!geo.has_index) {
     const get = el("button", { class: "primary" }, "Download the list (3 MB)");
     get.onclick = () => busy(get, "Downloading…", async () => {
       const r = await api().geofabrik_download_index();
       if (!r.ok) { msg("#dataMsg2", r.error, true); return; }
-      geo = r; renderRegions(busyNow);
+      geo = r; renderRegions(busyNow, d);
     });
     box.append(el("div", { class: "row" }, get));
     return;
@@ -378,7 +406,7 @@ async function renderRegions(busyNow) {
   const sel = el("select", {});
   for (const c of conts) sel.append(el("option", { value: c.id }, c.name));
   sel.value = geoContinent;
-  sel.onchange = () => { geoContinent = sel.value; renderRegions(busyNow); };
+  sel.onchange = () => { geoContinent = sel.value; renderRegions(busyNow, d); };
   const filt = el("input", { type: "search", placeholder: "Filter by name…" });
   filt.value = geoFilter;
   filt.oninput = () => { geoFilter = filt.value; drawList(); };
@@ -386,7 +414,7 @@ async function renderRegions(busyNow) {
   const refresh = el("button", { class: "ghost", title: `List from ${fmtDay(geo.index_date)}` }, "Refresh list");
   refresh.onclick = () => busy(refresh, "Downloading…", async () => {
     const r = await api().geofabrik_download_index();
-    if (r.ok) { geo = r; renderRegions(busyNow); } else msg("#dataMsg2", r.error, true);
+    if (r.ok) { geo = r; renderRegions(busyNow, d); } else msg("#dataMsg2", r.error, true);
   });
   box.append(el("div", { class: "row" }, sel, filt, sizesBtn, refresh));
   const listBox = el("div", { class: "geolist" });
@@ -423,9 +451,16 @@ async function renderRegions(busyNow) {
           busy(add, "Adding…", async () => {
             const r = await api().add_region(e.id);
             if (!r.ok) { msg("#dataMsg2", r.error, true); return; }
-            msg("#dataMsg2", `Added ${e.name}: ${r.tiles} tiles. Download its OpenStreetMap file in the list above, `
-              + "then pick it in Build (region list).");
-            geo = null; await applyRegions(r); refreshData();
+            geo = null; await applyRegions(r);
+            if (r.download && r.download.ok) {
+              dataJobStarted(r.download);
+              msg("#dataMsg2", `Added ${e.name} (${r.tiles} tile${r.tiles === 1 ? "" : "s"}). Downloading its map data now: progress is in the `
+                + "Build queue. Its tiles are on the Build map.");
+            } else {
+              refreshData();
+              msg("#dataMsg2", `Added ${e.name} (${r.tiles} tile${r.tiles === 1 ? "" : "s"}), but its download couldn't start: `
+                + `${(r.download && r.download.error) || "unknown error"} Press Download in its row when that's done.`, true);
+            }
           });
         };
         act.append(add);
@@ -610,7 +645,7 @@ async function initViews() {
     if (!confirm(`Delete the downloaded data of ${tiles.length} tile(s)?\n\nBuilt tiles stay in X-Plane. `
       + "The data is downloaded again automatically if you rebuild them.")) return;
     await busy($("#dataDelete"), "Deleting…", async () => {
-      const r = await api().delete_tiles(tiles, ["cache"], $("#region").value || S.default_region, "");
+      const r = await api().delete_tiles(tiles, ["cache"]);
       msg("#dataMsg2", r.ok === false ? r.error : `Deleted data of ${tiles.length} tile(s).`, r.ok === false);
       dataChecked.clear(); await refreshData(); refreshStatus(); refreshStatusbarDisk();
     });

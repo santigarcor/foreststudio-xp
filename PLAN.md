@@ -510,3 +510,37 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   381k conifer-plantation cells from OSM `leaf_type=needleleaved`; +07-078 (Colombia/Panama) from
   both files: 7,899 + 1,221 elements, 138 in both, 8,982 written. OSM pass with two files: 147 s.
 - Colombia unchanged: +10-076 DSF text + PNGs and +06-076 compiled DSF + PNGs byte-identical.
+
+### 2026-11-23 — One map and one pack for every region
+
+- Owner chose (asked: "less tedious for the final user"): one world map with every region's tiles,
+  built together, and one X-Plane folder instead of one per region; adding a region downloads its data
+  at once (no extra Download click).
+- Tile owner = region whose Geofabrik outline covers most of the tile (`geofabrik.tile_shares`);
+  +07-078 stays Colombia's, +08-080 is Panama's, Quito (-01-079) is Colombia's until Ecuador is added.
+  Each tile builds with its owner's rules (`forest build --region <owner>`); a job can mix regions.
+- Pack `out/forest_studio_xp` (+ `out/studio`). Considered editing scenery_packs.ini to put the new
+  pack where `forest_colombia` was: rejected (rule 2, ini only on request). Instead the migration
+  re-points the existing `forest_colombia` junction at the new pack, keeping its ini position; new
+  installs get `forest_studio_xp`. Other old region links are removed (duplicate tiles otherwise).
+- Data view: the per-region OSM card became a column of the Regions table; `forest data region`
+  (OSM file + ecoregions + cut-out + re-extract covered tiles) runs right after Add region
+  (Liechtenstein: 4 MB, 16 s).
+- Verified on the scratch copy with a fake X-Plane folder (real Resources/Global Scenery linked
+  read-only): migration merged Colombia (+06-076, +07-078), Panama (+08-080), Luxembourg (+49+006)
+  into one pack, the fake `forest_colombia` link now points at it, ini unchanged; one job built
+  +06-076 (colombia) and +08-080 (panama) at the same time; Add region → download job started.
+
+### 2026-11-24 — Download progress in the Regions table
+
+- Owner: after Add region the row said "not downloaded" + Download while the download was already
+  running. Now the row shows "Downloading the OpenStreetMap file… 45 % (28 MB)" with a bar (then
+  "getting it ready…", then the file's size/date). Progress comes from the job runner
+  (`Job.progress`, parsed from `download OSM: N MB P%`, printed per 1 %, one log line per 10 %).
+  Checked on the scratch copy adding Costa Rica (39 MB, 24 s).
+
+- Same day: building a Florida tile only said "running · satellite data ready" while the job
+  downloaded Florida's OSM file and read it. The data step now reports its phase in plain words
+  (download with %, satellite maps n of N, reading OpenStreetMap) in the Tiles tab, the Data view and
+  each tile's Data step in the Build queue. Checked on the scratch copy (Liechtenstein file removed,
+  then its tile built: download 29/59/89 % → satellite maps → reading OSM → building).

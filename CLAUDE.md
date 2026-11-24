@@ -16,7 +16,8 @@ file is the authoritative summary; keep both up to date when something important
 
 1. **Never modify installed X-Plane scenery or libraries** (simHeaven, airports, Global Scenery,
    default libraries…). ForestStudio only *reads* the X-Plane install. The one thing it creates
-   there is its own folder link `Custom Scenery/forest_<region>` (a directory junction).
+   there is its own folder link `Custom Scenery/forest_studio_xp` (a directory junction; an older
+   `forest_<region>` link re-pointed at the pack keeps its name).
 2. **`scenery_packs.ini`**: change it only when the user asks. Back it up first
    (`~/.foreststudio/cache/backups/scenery_packs.ini.<timestamp>`) unless the user explicitly says not to.
 3. **Colombia uses evergreen forest assets only** (no `EXPORT_SEASON` variants, no `SEASONAL`
@@ -78,7 +79,7 @@ that changes lives in `config.DATA_ROOT` (`%USERPROFILE%/.foreststudio`):
 | `config/profiles/*.toml`, `config/rules/*.toml` | the user's profiles / forest types; missing files are copied from the repo defaults on first use (`config.ensure_user_config`, never overwrites) |
 | `config/catalog_xp12.json` | forest catalog generated from this X-Plane |
 | `cache/` | `tiles/<tile>/`, `osm/` (country .pbf), `ecoregions/`, `jobs/`, `history.jsonl`, `backups/`, `decoded/` |
-| `out/` | `forest_<region>/` (the pack, junction target) and `studio_<region>/` (overlays, stats) |
+| `out/` | `forest_studio_xp/` (THE pack, every region's tiles, junction target) and `studio/` (overlays, stats) |
 
 Use `config.CACHE_ROOT / OUT_ROOT / USER_CONFIG / profile_path() / rules_path()`; never write under
 `REPO_ROOT`. `forest/migrate.py` moves the old in-repo `cache/`, `out/`, `config/local.toml` and
@@ -101,7 +102,8 @@ CLI (used by the app's job runner; handy for debugging):
 | `forest fetch --tiles +06-076,+06-075` | Satellite rasters per tile (4 downloads at a time) + OSM in **one** pass; downloads the OSM country file / ecoregions zip first if missing |
 | `forest data osm [--update] [--force]` | Download / update the Geofabrik country file (only if the server's is newer), then re-extract every tile that has `osm.json` |
 | `forest data ecoregions [--region x] [--update]` | Download the RESOLVE zip and make the region's cut-out |
-| `forest build --tile +06-076 --profile medium --region colombia --compile [--keep-text] [--install]` | Build one tile; `--install` ensures the pack link exists |
+| `forest data region --region x` | Everything a newly added region needs: OSM file, ecoregions zip, cut-out (+ re-extract covered tiles) |
+| `forest build --tile +06-076 --profile medium --compile [--region x] [--keep-text] [--install]` | Build one tile with its owner region's forest types (`--region` overrides); `--install` ensures the pack link exists |
 | `forest decode <file.dsf> [--label x]` | DSF → text into `<data>/cache/decoded/` (debug) |
 | `forest poc …` | Phase-0 proof of concept (three test squares near SKRG) |
 | `forest app` | Open the desktop app |
@@ -113,7 +115,8 @@ CLI (used by the app's job runner; handy for debugging):
 ```
 forest/
   config.py        data-folder paths, local.toml load/save, X-Plane & DSFTool auto-detect + validation
-  migrate.py       one-time move of old in-repo data to ~/.foreststudio (+ junction re-point)
+  migrate.py       one-time moves: old in-repo data → ~/.foreststudio; run_packs(): per-region
+                   packs → the one pack (+ junction re-point)
   datafolder.py    Settings → Data folder: check / move / switch, re-point links, location.toml
   credits.py       data + software credits (Settings → About) and the pack's CREDITS.txt
   regions.py       Region files (config/regions/<name>.toml): label, bounds (map tiles), ecoregion
@@ -122,8 +125,8 @@ forest/
                    add_from_geofabrik / remove; osm_sources(tile) = every downloaded extract covering it
   tiles.py         Tile (1°×1°, name "+06-076", 10° folder "+00-080"), Grid (north-up raster)
                    Tile.cache creates the folder (write); Tile.cache_path never does (read/check)
-  paths.py         <data>/out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
-                   out/studio_<region>/<tile>.{txt,stats.json,overlay.png,preview.png}
+  paths.py         <data>/out/forest_studio_xp/Earth nav data/…/<tile>.dsf (the one pack) vs
+                   out/studio/<tile>.{txt,stats.json,overlay.png,preview.png}; legacy_packs()
   fetch/
     sources.py     country-wide files: Geofabrik .pbf + RESOLVE zip — download (.part → rename,
                    `<file>.json` meta: server date/size/downloaded), status, check_update (HEAD)
@@ -216,13 +219,21 @@ tests/                              pytest suite (sandboxed)
 
 ### Install model
 
-- The region pack `~/.foreststudio/out/forest_<region>` is linked into X-Plane as **one directory junction**
-  `Custom Scenery/forest_<region>` (like OrthoStudio; a symlink on macOS/Linux). No admin rights needed. Every built tile is
-  in X-Plane immediately; uninstall removes only the junction. File symlinks are not possible on
+- **One pack for every region** (since 2026-11-23): `~/.foreststudio/out/forest_studio_xp` is linked into
+  X-Plane as **one directory junction** `Custom Scenery/forest_studio_xp` (like OrthoStudio; a symlink on
+  macOS/Linux). No admin rights needed. Every built tile (any region) is in X-Plane immediately; uninstall
+  removes only the junction. `pack.our_links()` = every `forest_*` junction pointing at the pack, so an
+  older link name counts as installed.
+- **Migration** (`migrate.run_packs`, app and CLI start): old `out/forest_<region>` / `studio_<region>`
+  are merged into the pack (a tile in two packs keeps the newer build); our X-Plane link to an old pack is
+  **re-pointed at the new pack under its old name** (the one listed first in `scenery_packs.ini`), so it
+  keeps its place in the scenery order without editing the ini; other old links are removed (X-Plane
+  would show the tiles twice). The owner's `forest_colombia` link becomes this. Verified on a scratch copy
+  with a fake X-Plane folder (Colombia + Panama + Luxembourg packs → one, ini untouched). File symlinks are not possible on
   this PC (need Developer Mode/admin); hard links were used briefly and replaced by the junction.
 - An existing *real* pack folder is absorbed: tiles only in X-Plane move into the project,
   duplicates are removed, anything that isn't a `.dsf` (or our `CREDITS.txt`) makes it refuse.
-- **Scenery order** (owner's ini): `forest_colombia` sits **below** hand-made airport/city packs
+- **Scenery order** (owner's ini): the pack (still named `forest_colombia` there) sits **below** hand-made airport/city packs
   (they have their own trees our exclusion would delete) and **above** simHeaven
   `X-World_America-4-extras` and `7-forests`, so on built tiles our tile-wide exclusion hides
   X-World's forests, random trees, hedges and `osm_tree`; unbuilt tiles keep X-World's forests
@@ -241,8 +252,19 @@ with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by
 `JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
 Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
 
+While the data step runs, `Api._data_phase` turns the fetch log into a plain-words phase
+(`job_status.phase`): "Downloading the OpenStreetMap file florida-latest.osm.pbf… 45 % (120 MB)",
+"Satellite maps: 1 of 2 tile(s) done", "Reading OpenStreetMap (file, MB) for N tile(s)"; the Tiles tab
+progress line and the Data view show it, and `JobRecord.data_note` writes it on every waiting tile's
+Data step (Build queue). It relies on the CLI lines `OSM country file missing: downloading <url>`,
+`satellite maps: downloading for N tile(s)`, `reading OpenStreetMap: …` (osm_pbf) and `download …%`.
+
+A build job can mix regions: `Api.start_build` looks up each tile's owner (`regions.owners()`) and runs
+`forest build --region <owner>` per tile; the job record's `region` holds the regions' labels.
+
 Download jobs use the same runner and queue (`Api.start_data_job`): kind `data` (fetch for tiles
-selected on the map, or the ecoregions zip) and `osm_update` (`forest data osm --update`, then
+selected on the map, the ecoregions zip, or `region` = `forest data region`, started by
+`Api.add_region` right after a region is added) and `osm_update` (`forest data osm --update`, then
 re-extract every tile with `osm.json`). Their records have `kind` and `step_names = ["data"]`;
 old records without them load as builds. Only one job (build or download) runs at a time.
 
@@ -250,7 +272,9 @@ old records without them load as builds. Only one job (build or download) runs a
 
 ## The app (views)
 
-- **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid; tile status colours (cached,
+- **Build**: Leaflet map (Esri satellite / OSM) with the 1° grid of **every region's tiles** (one
+  map; select tiles of several regions and build them together; "Go to region…" moves the map; no
+  region picker in the header); tile status colours (cached,
   built, installed, selected; **outdated** = orange; no ortho status — not relevant); click/shift-click selection
   (no "select all": the owner selects by hand); **Select outdated**; forest overlay (colour = biome
   or plantation, lilac = scrub, brightness = density, red = cut out, yellow = OSM trees, light blue =
@@ -258,10 +282,11 @@ old records without them load as builds. Only one job (build or download) runs a
   - **Tiles**: selection, **X-Plane pack** (Install/Uninstall pack, ini warnings), Build with
     "Builds at the same time: Auto (N)/1…max", time & disk **estimate** (from `history.jsonl`
     medians), confirmation for ≥10 tiles or >30 min, Delete selected tiles (built tiles and/or
-    downloaded data), Tile info (status, last build stats, forest by biome, plantations, types).
+    downloaded data), Tile info (whose forest types + "Edit …'s forest types", status, last build
+    stats, forest by biome, plantations, types).
   - **Profile**: every profile value as slider + help + FPS mark; Reset to defaults (shipped values via
     `Api.default_profile`; own profiles reset to medium; not saved until Save) / Revert / Save as / Save.
-  - **Forest types**: sparse_below, OSM single-tree type, general town-tree type, per-biome
+  - **Forest types**: "Forest types of [region]" picker (one region at a time); sparse_below, OSM single-tree type, general town-tree type, per-biome
     **Scrub & town trees** (bush type or none, "also on bare ground", town tree type), **Plantations** editor (tags, tree type,
     thickness, reorder), **Biomes** (colour, label, ecoregion chips add/remove, per-biome
     elevation bands with dense/sparse type pickers sorted lightest first with FPS cost); **Reset to defaults** loads the shipped
@@ -270,10 +295,12 @@ old records without them load as builds. Only one job (build or download) runs a
 - **Build queue** (internal id `works`; the open log keeps updating without closing): saved jobs (search by tile), progress, per-tile step bars, log, final report,
   per-step table, errors; delete job / clear all. Download jobs show as "Download data" /
   "Update OSM data".
-- **Data**: **Regions** (your regions: tiles, evergreen/seasonal, OSM file, Show on map / Download OSM /
-  Remove for added ones; Add a region from Geofabrik's list: continent picker, filter, Show download
-  sizes, Refresh list); cards for the selected region's OSM file (size, map-data date, downloaded date; Download /
-  Check for update → Update OSM data), ecoregions (Download), satellite (fixed releases, nothing to
+- **Data**: **Regions** (your regions: tiles, evergreen/seasonal, OSM file per region with size / date /
+  Download / Check for update → Update, Show on map, Remove for added ones; Add a region from Geofabrik's
+  list: continent picker, filter, Show download sizes, Refresh list; **adding starts its download at
+  once**, and while a region's download runs its row shows what is downloading with a live % bar:
+  `job_status` gives `region` + `progress` parsed from the CLI's `download <what>: N MB P%` lines,
+  printed per 1 %, logged per 10 %); cards for ecoregions (Download; which regions have a cut-out), satellite (fixed releases, nothing to
   update); table of tiles with data (satellite / OSM date, flagged when older than the country file /
   elevation / size / built) with Download for map selection, Select checked on map, Delete checked data.
 - **Disk space**: usage by category (tile data, OSM country file, ecoregions, built pack, app
@@ -332,15 +359,18 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 
 ## Regions (`config/regions/<name>.toml`)
 
-A region's name names its forest types (`config/rules/<name>.toml`), its pack (`forest_<name>`),
-its OSM file and its ecoregion cut-out. Keys: `label`, `bounds = [w, s, e, n]` (whole degrees: the
+A region's name names its forest types (`config/rules/<name>.toml`), its OSM file and its ecoregion
+cut-out. **Tile owner**: the map offers every tile of every region; a tile several regions offer is
+built with the forest types of the region whose Geofabrik outline covers most of it
+(`regions.owners()` / `owner(tile)`, from `geofabrik.tile_shares`; without the index every region
+tile counts as fully covered; ties: default region, then name). When the owner changes (e.g. adding
+Ecuador takes Quito from Colombia's box), the tile shows as outdated ("built with X's forest types"). Keys: `label`, `bounds = [w, s, e, n]` (whole degrees: the
 tiles offered on the map), optional `ecoregion_bounds` (cut-out box, default bounds + 1°; Colombia
 keeps its old box so tiles stay identical), `osm_url` (Geofabrik `.osm.pbf`), `evergreen_only`
 (Colombia true: rule 3; false lets rules and builds use seasonal types), optional `tiles = [...]`
 (only these tiles of the bounds) and `geofabrik_id`. Shipped files in `<code>/config/regions/`
 (only Colombia), the user's in `<data>/config/regions/` (same name wins). The tile cache
-(`cache/tiles/`) is shared by all regions; built tiles are per region (`out/forest_<region>`,
-`out/studio_<region>`).
+(`cache/tiles/`) and the pack (`out/forest_studio_xp`, `out/studio`) are shared by all regions.
 
 - **Adding a region** (Data → Regions): downloads Geofabrik's `index-v1.json` (3.4 MB, on request)
   and writes `<data>/config/regions/<id>.toml` with the tiles the extract's outline touches,
@@ -428,7 +458,7 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 ## Conventions
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
-  require; written on every compile and on Install pack); app files go to `<data>/out/studio_<region>/`.
+  require; written on every compile and on Install pack); app files go to `<data>/out/studio/`.
 - New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 5)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.

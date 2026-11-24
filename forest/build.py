@@ -795,7 +795,7 @@ def outdated_reasons(stats: dict | None, tile: Tile, profile: str, region: str,
     if stats.get("profile") != profile:
         reasons.append(f"built with profile '{stats.get('profile')}'")
     elif stats.get("region", region) != region:
-        reasons.append(f"built for region '{stats.get('region')}'")
+        reasons.append(f"built with {stats.get('region')}'s forest types; now {region}'s")
     else:
         fp = fingerprint or settings_fingerprint(Settings.load(profile, region))
         if stats["fingerprint"] != fp:
@@ -807,10 +807,13 @@ def outdated_reasons(stats: dict | None, tile: Tile, profile: str, region: str,
     return reasons
 
 
-def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") -> Path:
-    """Build one tile. Writes the DSF text and the app's files (overlay, preview, stats) to
-    out/studio_<region>/ and returns the text path; compiling puts the .dsf in the pack."""
+def build_tile(tile: Tile, profile: str = "medium", region: str | None = None) -> Path:
+    """Build one tile with `region`'s forest types (default: the tile's owner, regions.owner).
+    Writes the DSF text and the app's files (overlay, preview, stats) to out/studio/ and returns
+    the text path; compiling puts the .dsf in the pack."""
+    from forest import regions
     from forest.paths import studio_path
+    region = region or regions.owner(tile) or regions.default_name()
     t0 = time.time()
     s = Settings.load(profile, region)
     c = classify(tile, s, t0)
@@ -824,9 +827,9 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
     ot = OverlayTile(lat=tile.lat, lon=tile.lon, polygons=polys,
                      agent=f"forest-studio {region}/{profile}")
     ot.exclude_for.append(tile.bounds)  # our forests replace everything below
-    txt = ot.write_to(studio_path(region, tile, ".txt"))
-    preview(c, studio_path(region, tile, ".preview.png"))
-    overlay(c, studio_path(region, tile, ".overlay.png"), osm_polys=extra)
+    txt = ot.write_to(studio_path(tile, ".txt"))
+    preview(c, studio_path(tile, ".preview.png"))
+    overlay(c, studio_path(tile, ".overlay.png"), osm_polys=extra)
     cell_km2 = km2_per_deg2(tile.lat) / c["grid"].cells ** 2
     stats["biome_km2"] = {b["name"]: round(float((c["trees"] & (c["biome_idx"] == i)).sum()) * cell_km2, 1)
                           for i, b in enumerate(c["biomes"]) if (c["trees"] & (c["biome_idx"] == i)).any()}
@@ -837,6 +840,6 @@ def build_tile(tile: Tile, profile: str = "medium", region: str = "colombia") ->
     stats.update(tile=tile.name, profile=profile, region=region, polygons=len(polys),
                  fingerprint=settings_fingerprint(s), data=data_stamp(tile), build_version=BUILD_VERSION,
                  exclusion_cells=c["excl_stats"], seconds=round(time.time() - t0, 1))
-    studio_path(region, tile, ".stats.json").write_text(json.dumps(stats, indent=1), encoding="utf-8")
+    studio_path(tile, ".stats.json").write_text(json.dumps(stats, indent=1), encoding="utf-8")
     _log(f"wrote {txt}", t0)
     return txt

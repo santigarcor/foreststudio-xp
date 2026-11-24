@@ -96,7 +96,7 @@ def _fetch_bbox(s: float, w: float, n: float, e: float, out: Path, retries: int 
     raise RuntimeError(f"Overpass fetch failed for {out.name}: {last}")
 
 
-def fetch_osm(tile: Tile, region: str) -> Path:
+def fetch_osm(tile: Tile, region: str | None = None) -> Path:
     """Use the local Geofabrik extracts covering the tile when present (preferred), else Overpass."""
     from forest import regions
     from forest.fetch.osm_pbf import extract_tile

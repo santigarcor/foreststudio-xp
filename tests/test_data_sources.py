@@ -93,7 +93,7 @@ def test_data_status_lists_tiles_and_stale_osm(sandbox):
     os.utime(d / "osm.json", (1_900_000_000, 1_900_000_000))         # extracted from an older file
     a = api.Api.__new__(api.Api)                                      # no window, no catalog needed
     a.job = api.Job()
-    st = a.data_status("colombia")
-    assert st["osm"]["exists"] and not st["ecoregions"]["exists"]
+    st = a.data_status()
+    assert st["osm"]["colombia"]["exists"] and not st["ecoregions"]["exists"]
     (t,) = st["tiles"]
     assert t["tile"] == "+06-076" and t["satellite"] and t["osm"] and t["osm_stale"] and not t["built"]

@@ -103,11 +103,12 @@ def check_update(p: Path, url: str) -> dict:
 
 
 def print_progress(label: str) -> Callable[[int, int | None], None]:
-    """Progress printer for the CLI / job log: one line per 10 %."""
+    """Progress printer for the CLI / job log: one line per 1 % (the app logs every 10th and shows
+    the rest as a progress bar)."""
     last = [-1]
 
     def cb(done: int, total: int | None) -> None:
-        step = int(done * 10 / total) if total else done // (50 * CHUNK)
+        step = int(done * 100 / total) if total else done // (50 * CHUNK)
         if step != last[0]:
             last[0] = step
             pct = f"{done * 100 // total}%" if total else ""

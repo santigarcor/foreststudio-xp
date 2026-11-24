@@ -50,9 +50,9 @@ def as_dict() -> dict:
     return {"data": DATA, "software": SOFTWARE}
 
 
-def credits_text(region: str) -> str:
+def credits_text() -> str:
     lines = [
-        f"forest_{region} - forest overlay for X-Plane 12, made with ForestStudio XP",
+        "ForestStudio XP forests - forest overlay for X-Plane 12, made with ForestStudio XP",
         "https://github.com/santigarcor/foreststudio-xp (GPL-3.0)",
         "",
         "Built from these data sources (their licenses require this notice):",
@@ -70,10 +70,10 @@ def credits_text(region: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_pack_credits(pack_root: Path, region: str) -> Path:
+def write_pack_credits(pack_root: Path) -> Path:
     pack_root.mkdir(parents=True, exist_ok=True)
     p = pack_root / CREDITS_FILE
-    text = credits_text(region)
+    text = credits_text()
     if not p.exists() or p.read_text(encoding="utf-8-sig") != text:
         p.write_text(text, encoding="utf-8-sig")   # BOM: Notepad & co. show the © right
     return p
