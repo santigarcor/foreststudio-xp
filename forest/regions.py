@@ -200,10 +200,9 @@ def _covers(r: Region, tile: Tile) -> bool:
     return tile.name in geofabrik.tiles_of(e["id"]) if e else r.contains(tile)
 
 
-def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
-    """Every downloaded OSM extract that covers the tile (a tile on a border needs both
-    countries' files), plus the given region's own file (default: the tile's owner) when
-    downloaded. Sorted by file name."""
+def osm_files(tile: Tile, region: str | None = None, downloaded_only: bool = False) -> list[Path]:
+    """Every region's OSM extract that covers the tile (a tile on a border needs both countries'
+    files), plus the given region's own file (default: the tile's owner). Sorted by file name."""
     region = region or owner(tile)
     out: dict[str, Path] = {}
     for n in names():
@@ -212,9 +211,40 @@ def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
         except ValueError:
             continue
         f = r.osm_file
-        if f.exists() and f.name not in out and (n == region or _covers(r, tile)):
+        if downloaded_only and not f.exists():
+            continue
+        if f.name not in out and (n == region or _covers(r, tile)):
             out[f.name] = f
     return [out[k] for k in sorted(out)]
+
+
+def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
+    """The downloaded ones of osm_files: what the tile's osm.json is read from."""
+    return osm_files(tile, region, downloaded_only=True)
+
+
+def osm_groups(tiles: list[str], owners: dict[str, str]) -> list[list[str]]:
+    """Split tiles into groups that share no OSM country file, so each group's data can be read
+    at the same time as the others' (a border tile joins its countries into one group: one pass
+    per file stays one pass). Tiles no file covers form one group. The order of `tiles` is kept."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    files_of = {}
+    for n in tiles:
+        files = [f.name for f in osm_files(Tile.parse(n), owners.get(n))] or ["<none>"]
+        files_of[n] = files
+        for f in files[1:]:
+            parent[find(f)] = find(files[0])
+    groups: dict[str, list[str]] = {}
+    for n in tiles:
+        groups.setdefault(find(files_of[n][0]), []).append(n)
+    return list(groups.values())
 
 
 def _share(r: Region, tile: Tile) -> float:

@@ -103,14 +103,14 @@ def check_update(p: Path, url: str) -> dict:
 
 
 def print_progress(label: str) -> Callable[[int, int | None], None]:
-    """Progress printer for the CLI / job log: one line per 1 % (the app logs every 10th and shows
-    the rest as a progress bar)."""
+    """Download progress as `download` events, one per 1 % (the app logs every 10th and shows the
+    rest as a progress bar; the CLI prints each)."""
     last = [-1]
 
     def cb(done: int, total: int | None) -> None:
         step = int(done * 100 / total) if total else done // (50 * CHUNK)
         if step != last[0]:
             last[0] = step
-            pct = f"{done * 100 // total}%" if total else ""
-            print(f"download {label}: {done / 1e6:.0f} MB {pct}".rstrip(), flush=True)
+            from forest import events
+            events.emit("download", what=label, mb=round(done / 1e6), pct=done * 100 // total if total else None)
     return cb

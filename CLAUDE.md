@@ -94,7 +94,7 @@ folder gets a `ForestStudio` subfolder; a folder that already has data is *switc
 moved), moves every item without overwriting, re-points our junctions, writes `location.toml`, and
 the app restarts (`Api.restart_app`) because modules read their folders once at import.
 
-CLI (used by the app's job runner; handy for debugging):
+CLI (the same `forest/tasks.py` functions the app's workers run; handy for debugging):
 
 | Command | What it does |
 |---|---|
@@ -151,10 +151,14 @@ forest/
   history.py       measured seconds/MB/peak RAM per step → estimates
   resources.py     parallel builds = min(physical cores − 1, (free RAM − 2 GB) / peak GB, 8)
   diskusage.py     disk usage by category + safe clean-ups
-  proc.py          hidden subprocess helpers (no console windows); run_measured = + peak memory
+  proc.py          hidden subprocess helpers (no console windows); run_measured = + peak memory;
+                   terminate_pid = stop a process tree
   fsutil.py        size_bytes / size_mb / move_merge (no-overwrite move) shared by data folder,
                    migration, disk usage and history
-  cli.py           command line
+  events.py        progress events (worker → app over a pipe; printed as text in the CLI)
+  tasks.py         the work itself: fetch, build, data_osm/region/ecoregions, compile_dsf
+  worker.py        one task in one fresh process (spawn, pythonw on Windows), messages, stop
+  cli.py           command line (thin wrapper over tasks)
   app/             pywebview desktop app: main.py, api.py (js_api), settings.py (schemas,
                    validation, TOML writers), devserver.py (dev only), ui/{index.html,app.css,app.js,views.js}
 config/                             DEFAULTS shipped with the app (user copies live in ~/.foreststudio/config)
@@ -260,25 +264,46 @@ tests/                              pytest suite (sandboxed)
 
 ### Jobs / parallel builds
 
-App job = `fetch --tiles all` (satellite downloads ×4 in parallel, OSM one pass) then a pool of
-N `build` subprocesses (N = Auto from `resources.auto_workers()`, measured peak ≈ 3.8 GB RAM for
+**Workers, not CLI subprocesses** (since 2026-11-24): every task runs in its **own fresh process**
+via `forest/worker.py` (`Worker(task, **kwargs)`; `multiprocessing` spawn; on Windows the child runs on
+`pythonw.exe` → no console, rule 4; `freeze_support()` in `app/main.py` for a packaged build). Tasks are
+the functions of `forest/tasks.py` (`fetch`, `build`, `data_osm`, `data_region`, `data_ecoregions`);
+`cli.py` is now a thin wrapper over the same functions (debugging). Progress comes back as
+**structured events** over a pipe (`forest/events.py`: `emit(event, **data)`; names `log`, `download`,
+`downloading`, `ready`, `sat_start`, `sat_tile`, `osm_reading`, `osm_done`, `step`), stray prints as
+`log`, then exactly one `exit {rc}`; an exception sends `error {type, message, traceback}` (traceback
+lands in the job log); a process that dies silently yields `exit {crashed: True}` and only fails its own
+tile. Without a sink (CLI) `events.emit` prints `events.text()`, the same lines as before. Cancel =
+`Worker.stop()` → `proc.terminate_pid` (process tree, so DSFTool goes too). A new process per tile is
+deliberate: GDAL/numpy/shapely don't give the 2–4 GB peak back; ending the process does.
+
+App job (`Api._run`, since 2026-11-24): `prepare` (files every country shares: ecoregions zip,
+climate map — once, so two workers never write the same file), then the tiles are split by
+`regions.osm_groups` into **groups that share no OSM country file** (a border tile joins its
+countries; tiles of one country = one group, one pass per file). Each group's `fetch` (satellite ×4,
+OSM one pass) runs **side by side** with the others, and its tiles start building as soon as their own
+data is ready (Colombia's tiles build while Florida's 662 MB file is still being read: 2 tiles 375 s vs
+~510 s before). Data steps and builds share the same N slots (a semaphore): an OSM pass peaks at
+1.4 GB (Colombia) / 3.05 GB (Florida), like a build (`osm_pass` history now records `peak_gb`).
+Per-group phases are joined with " · " in `job_status.phase`; `osm_reading` / `osm_done` carry
+`tiles`, so a note or "data done" only lands on that group's tiles. The pool of
+N `build` workers (N = Auto from `resources.auto_workers()`, measured peak ≈ 3.8 GB RAM for
 Medellín, 2.2 GB San Andrés since 2026-11-21 (was 5.3 / 4.3 GB); this PC 8 cores / 33 GB → Auto 3,
 rising as new builds replace the old peaks in `history.jsonl`; the peak includes DSFTool, measured
 since 2026-11-23: 0.27 GB on Medellín while the build holds 0.4 GB, so it never sets the limit). Logs tagged `[tile]`; a failed
 tile doesn't stop others; cancel terminates all. Every job is saved in `<data>/cache/jobs/<id>.{json,log}`
-with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by parsing log lines in
-`JobRecord.track`), results and a report; jobs left running by a closed app become "interrupted".
-Measured: 6 tiles in 89 s with 3 workers vs 218 s serial.
+with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by `step` / `sat_tile` /
+`osm_done` events in `JobRecord.on_event`), results and a report; jobs left running by a closed app become "interrupted".
+Measured: 6 tiles in 89 s with 3 workers vs 218 s serial; +30-082 69 s through a worker = the CLI time.
 
-While the data step runs, `Api._data_phase` turns the fetch log into a plain-words phase
+While the data step runs, `Api._on_event` turns the fetch events into a plain-words phase
 (`job_status.phase`): "Downloading the OpenStreetMap file florida-latest.osm.pbf… 45 % (120 MB)",
 "Satellite maps: 1 of 2 tile(s) done", "Reading OpenStreetMap (file, MB) for N tile(s)"; the Tiles tab
 progress line and the Data view show it, and `JobRecord.data_note` writes it on every waiting tile's
-Data step (Build queue). It relies on the CLI lines `OSM country file missing: downloading <url>`,
-`satellite maps: downloading for N tile(s)`, `reading OpenStreetMap: …` (osm_pbf) and `download …%`.
+Data step (Build queue). Download progress (`download` events, one per 1 %) is logged per 10 %.
 
 A build job can mix regions: `Api.start_build` looks up each tile's owner (`regions.owners()`) and runs
-`forest build --region <owner>` per tile; the job record's `region` holds the regions' labels.
+a `build` worker with `region=<owner>` per tile; the job record's `region` holds the regions' labels.
 
 Download jobs use the same runner and queue (`Api.start_data_job`): kind `data` (fetch for tiles
 selected on the map, the ecoregions zip, or `region` = `forest data region`, started by

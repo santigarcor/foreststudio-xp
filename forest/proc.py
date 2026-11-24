@@ -1,4 +1,4 @@
-"""Start helper programs (DSFTool, our own CLI) without ever opening a console window."""
+"""Start helper programs (DSFTool) without ever opening a console window; stop app workers."""
 
 from __future__ import annotations
 
@@ -94,6 +94,29 @@ def terminate_tree(p: subprocess.Popen) -> None:
         p.terminate()
     except OSError:
         pass
+
+
+def terminate_pid(pid: int) -> None:
+    """Stop a process by id and everything it started (an app worker and its DSFTool)."""
+    try:
+        import psutil
+
+        p = psutil.Process(pid)
+        procs = p.children(recursive=True) + [p]
+    except Exception:  # noqa: BLE001 - psutil missing or the process just ended
+        procs = []
+    for c in procs:
+        try:
+            c.terminate()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+    if not procs:
+        import os
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
 
 
 def python_exe() -> str:

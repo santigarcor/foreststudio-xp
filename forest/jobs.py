@@ -24,9 +24,6 @@ STEPS = ["data", "classify", "vectorise", "compile"]
 STEP_LABELS = {"data": "Data", "classify": "Classify", "vectorise": "Vectorise", "compile": "Compile"}
 KINDS = {"build": "Build", "data": "Download data", "osm_update": "Update OSM data"}
 
-# Log lines that move a tile from one step to the next (see build.py / cli.py output).
-_TILE_RASTERS = re.compile(r"^([+-]\d{2}[+-]\d{3}): rasters ready")
-_TILE_DATA_FAIL = re.compile(r"^([+-]\d{2}[+-]\d{3}): data download FAILED")
 
 
 def _now() -> float:
@@ -130,40 +127,33 @@ class JobRecord:
             if note:
                 st["note"] = note
 
-    def data_note(self, note: str) -> None:
+    def data_note(self, note: str, tiles: list[str] | None = None) -> None:
         """What the shared data step is doing (downloading the country file, reading OSM…), shown
-        on every tile whose data isn't finished yet."""
+        on every tile whose data isn't finished yet (only `tiles` when given: e.g. the tiles one
+        OSM country file is read for, not a neighbour waiting for another country's file)."""
         for t in self.d["tiles"]:
+            if tiles is not None and t not in tiles:
+                continue
             if self.d["steps"][t]["data"]["status"] in ("pending", "running"):
                 self.step(t, "data", "running", note)
 
-    def track(self, tag: str, line: str) -> None:
-        """Advance steps from one log line (tag = tile name for build lines, '' for data)."""
-        text = line.strip()
-        if not tag:
-            m = _TILE_RASTERS.match(text)
-            if m:
-                self.step(m.group(1), "data", "running", "satellite maps ready · OpenStreetMap next")
-                return
-            m = _TILE_DATA_FAIL.match(text)
-            if m:
-                self.step(m.group(1), "data", "failed", text.split("FAILED:", 1)[-1].strip()[:200])
-                return
-            if text.startswith("OSM:"):
-                for t in self.d["tiles"]:
-                    if self.d["steps"][t]["data"]["status"] != "failed":
-                        self.step(t, "data", "done", text)
-            return
-        if "rasters cached" in text:
-            self.step(tag, "data", "done")
-            self.step(tag, "classify", "running")
-        elif "classified:" in text:
-            self.step(tag, "classify", "done")
-            self.step(tag, "vectorise", "running")
-        elif "vectorised" in text:
-            self.step(tag, "vectorise", "done")
-        elif text.startswith("[") and "wrote " in text:
-            self.step(tag, "compile", "running")
+    def on_event(self, ev: str, d: dict) -> None:
+        """Advance steps from a worker's progress event (forest.events)."""
+        if ev == "sat_tile":
+            if d.get("ok"):
+                self.step(d["tile"], "data", "running", "satellite maps ready · OpenStreetMap next")
+            else:
+                self.step(d["tile"], "data", "failed", str(d.get("error", ""))[:200])
+        elif ev == "osm_done":
+            note = "OSM: already up to date" if not d.get("n") else f"OSM read for {d['n']} tile(s)"
+            only = d.get("tiles")
+            for t in self.d["tiles"]:
+                if only is not None and t not in only:
+                    continue           # another country's tiles: another worker reads their file
+                if self.d["steps"][t]["data"]["status"] != "failed":
+                    self.step(t, "data", "done", note)
+        elif ev == "step" and d.get("step") in self.step_names:
+            self.step(d["tile"], d["step"], d.get("status", "running"), d.get("note", ""))
 
     def tile_finished(self, tile: str, rc: int, last_lines: list[str], result: dict | None) -> None:
         steps = self.d["steps"].get(tile, {})

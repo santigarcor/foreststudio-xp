@@ -581,3 +581,34 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   shrubland, and salt marsh / reed beds are excluded → 0 km² on this tile.
 - +30-082 (scratch, fresh default rules): coni_wrm_wet 2,377 km², swamp forest 565 (simHeaven: 526
   wetland), mixed 497, bushes 34, OSM-broadleaf 4; 23.9 M trees. OSM leaf_type covers ~770 km².
+
+### 2026-11-24 — In-program workers instead of CLI subprocesses (#8)
+
+- The app no longer starts `python -m forest.cli …` and parses its log lines. Each task (fetch, one
+  tile build, OSM update, region download, ecoregions) runs in its own fresh `multiprocessing` (spawn)
+  process from `forest/worker.py`; the work moved from `cli.py` into `forest/tasks.py` (CLI = wrapper).
+- Progress is structured events (`forest/events.py`) over a pipe: job steps and the data phase no longer
+  depend on the wording of log lines (`JobRecord.track` / `Api._data_phase` and their regexes removed).
+- Errors come back with their traceback; a worker that dies without a word fails only its tile
+  (`crashed`); cancel stops the worker's process tree (DSFTool included).
+- No console windows: Windows workers run on `pythonw.exe`; `freeze_support()` ready for PyInstaller.
+  Checked a zip-launched main (like the `foreststudio-xp.exe` launcher) doesn't re-run in the worker.
+- Measured (scratch data folder): +30-082 69.1 s through the app = the CLI build; data 1.7 s,
+  classify 46.7, vectorise 9.9, compile 2.7. Cancel at 20 s → job cancelled, no leftover workers/DSFTool.
+- Tests: `tests/test_worker.py` (order of events, traceback, crash isolation, stop, pythonw, Api._task).
+
+### 2026-11-24 — Countries' data side by side; build as soon as a tile's data is ready
+
+- Owner question: why does a Florida tile wait for Colombia's OSM file? Before, a job had ONE data
+  step (all country files read one after another) and builds started only after it. Same-country tiles
+  must share one pass over their file (reading 335 MB per tile would be far slower), different
+  countries don't.
+- Now `regions.osm_groups` splits a job's tiles into groups sharing no OSM file (union over the files
+  each tile needs, downloaded or not; border tiles join their countries). `tasks.prepare` downloads the
+  shared ecoregions zip / climate map first. Each group's fetch runs in its own worker at the same
+  time; its tiles' builds are queued the moment it ends. Data steps and builds share the N slots.
+- Also fixed: the "Reading OpenStreetMap (colombia…)" note landed on every waiting tile (Florida's
+  too); `osm_reading` and `osm_done` now carry their `tiles`.
+- Measured (scratch, 2 slots): +06-076 + +30-082 with both OSM files to read → 375 s. OSM passes
+  137 s (Colombia, alone 135) and 309 s (Florida, alone 305): no slowdown side by side. Peaks 1.39 /
+  3.05 GB. +06-076 was built (63 s) while Florida's file was still being read. Old order ≈ 510 s.

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
-import subprocess
 import sys
 import threading
 import time
@@ -27,13 +25,8 @@ def _is_tile_in(name: str, region) -> bool:
         return False
 
 
-_COUNTRY_DL_RE = re.compile(r"OSM country file(?: missing)?: downloading (?P<url>\S+)")
-_READING_RE = re.compile(r"reading OpenStreetMap: (?P<file>\S+) \((?P<mb>\d+) MB\) for (?P<n>\d+) tile")
-_SAT_START_RE = re.compile(r"satellite maps: downloading for (?P<n>\d+) tile")
-_SAT_READY_RE = re.compile(r"[+-]\d{2}[+-]\d{3}: (rasters ready|data download FAILED)")
 _DL_DEFAULT = {"OSM": "the OpenStreetMap file", "ecoregions": "the biome map (Ecoregions 2017)",
                "climate": "the climate map (Köppen-Geiger)"}
-_DOWNLOAD_RE = re.compile(r"download (?P<what>\w+): (?P<mb>\d+) MB(?: (?P<pct>\d+)%)?\s*$")
 
 
 class Job:
@@ -47,15 +40,19 @@ class Job:
         self.done: list[str] = []
         self.failed: list[str] = []
         self.queue: list[str] = []
-        self.procs: set[subprocess.Popen] = set()   # running subprocesses (for cancel)
+        self.procs: set = set()                     # running forest.worker.Worker (for cancel)
         self.active: set[str] = set()               # tiles currently building
         self.workers = 1
         self.record = None                          # forest.jobs.JobRecord (saved job)
         self.region = ""                            # data jobs: the region whose files download
         self.progress: dict | None = None           # current download: {"what", "mb", "pct"}
-        self.phase: str | None = None               # what the data step is doing, in plain words
-        self.dl_name = ""                           # the file being downloaded ("the OpenStreetMap file …")
-        self.sat = [0, 0]                           # satellite maps ready / tiles
+        self.phase: str | None = None               # what the data steps are doing, in plain words
+        # per data group (country files read side by side; "" = the only one): its tiles, the file
+        # being downloaded ("the OpenStreetMap file …"), satellite maps ready / tiles, its phase
+        self.groups: dict[str, dict] = {}
+
+    def group(self, key: str) -> dict:
+        return self.groups.setdefault(key, {"tiles": None, "dl_name": "", "sat": [0, 0], "phase": None})
 
     def claim(self) -> bool:
         """Mark a job as running unless one already is (one check-and-set under the lock:
@@ -537,7 +534,7 @@ class Api:
         try:
             j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
             j.current, j.workers, j.region, j.progress = None, n, "", None
-            j.phase, j.dl_name, j.sat = None, "", [0, 0]
+            j.phase, j.groups = None, {}
             used = sorted({own[x] for x in names})
             j.record = JobRecord.new(names, profile, ", ".join(regions.get(r).label for r in used), n)
             for t in names:
@@ -690,13 +687,13 @@ class Api:
                 return {"ok": False, "error": str(exc)}
             if not names:
                 return {"ok": False, "error": "Select some tiles on the map first."}
-            args, rkind, label = ["fetch", "--tiles", ",".join(names)], "data", "downloading data"
+            args, rkind, label = ("fetch", {"tiles": names}), "data", "downloading data"
         elif kind == "osm":
             from forest import regions
             reg = regions.get(region)
             names = [d.name for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists()
                      and _is_tile_in(d.name, reg)] if CACHE.exists() else []
-            args = ["data", "osm", "--region", region, "--update"] + (["--force"] if force else [])
+            args = ("data_osm", {"region": region, "update": True, "force": bool(force)})
             rkind, label = "osm_update", "updating OSM data"
         elif kind == "region":
             from forest import regions
@@ -704,9 +701,9 @@ class Api:
                 label = f"downloading {regions.get(region).label}"
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
-            names, args, rkind = [], ["data", "region", "--region", region], "data"
+            names, args, rkind = [], ("data_region", {"region": region}), "data"
         elif kind == "ecoregions":
-            names, args, rkind, label = [], ["data", "ecoregions", "--region", region, "--update"], "data", "downloading ecoregions"
+            names, args, rkind, label = [], ("data_ecoregions", {"region": region, "update": True}), "data", "downloading ecoregions"
         else:
             return {"ok": False, "error": f"unknown data job '{kind}'"}
         j = self.job
@@ -715,7 +712,7 @@ class Api:
         try:
             j.cancel, j.done, j.failed, j.queue = False, [], [], list(names)
             j.current, j.workers = label, 1
-            j.phase, j.dl_name, j.sat = None, "", [0, 0]
+            j.phase, j.groups = None, {}
             j.region = region if kind in ("osm", "region", "ecoregions") else ""
             j.progress = None
             j.record = JobRecord.new(names, "", region, 1, kind=rkind)
@@ -727,13 +724,13 @@ class Api:
             raise
         return {"ok": True, "job": j.record.id, "tiles": len(names)}
 
-    def _run_data(self, args: list[str], label: str) -> None:
+    def _run_data(self, args: tuple[str, dict], label: str) -> None:
         j = self.job
         t0 = time.time()
         rc = 1
         try:
             j.add(f"=== {label} ===")
-            rc = self._step(args)
+            rc = self._task(*args)
             with j.lock:
                 j.done = list(j.queue) if rc == 0 else []
                 j.failed = [] if rc == 0 else list(j.queue)
@@ -750,9 +747,8 @@ class Api:
         self.job.cancel = True
         with self.job.lock:
             procs = list(self.job.procs)
-        from forest import proc as hidden
-        for pr in procs:
-            hidden.terminate_tree(pr)   # the build and its DSFTool
+        for w in procs:
+            w.stop()   # the worker and its DSFTool
         return {"ok": True}
 
     def job_status(self, after: int = 0) -> dict:
@@ -766,81 +762,103 @@ class Api:
                 "phase": j.phase if j.running else None,
                 "job": j.record.id if j.record else None}
 
-    def _step(self, args: list[str], tag: str = "", tail: list | None = None) -> int:
-        from forest import proc as hidden
+    def _task(self, task: str, kwargs: dict, tag: str = "", tail: list | None = None,
+              group: str = "") -> int:
+        """Run a forest.tasks function in a fresh worker process and follow its messages (log
+        lines, download progress, data phases, build steps). Returns its exit code."""
+        from forest import events
+        from forest.worker import Worker
 
-        cmd = [hidden.python_exe(), "-W", "ignore", "-u", "-m", "forest.cli", *args]
         prefix = f"[{tag}] " if tag else ""
-        self.job.add(prefix + "$ forest " + " ".join(args))
-        proc = hidden.popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, encoding="utf-8", errors="replace")
+        shown = " ".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in kwargs.items())
+        self.job.add(prefix + f"$ {task} {shown}")
+        w = Worker(task, **kwargs)
         with self.job.lock:
-            self.job.procs.add(proc)
-        logged = {}                        # download -> last 10 % step written to the log
+            if self.job.cancel:
+                return 1
+            w.start()
+            self.job.procs.add(w)
+        logged: dict = {}                  # download -> last 10 % step written to the log
+        rc = 1
+
+        def keep(line: str) -> None:
+            if tail is not None:
+                tail.append(line)
+                del tail[:-40]
         try:
-            assert proc.stdout
-            for line in proc.stdout:
-                if line.startswith(("Scanning for", "Got dimension", "Got entire", "Converting ", "Converted ")):
+            for msg in w.messages():
+                ev = msg.pop("event", "log")
+                if ev == "exit":
+                    rc = int(msg.get("rc", 1))
+                    if msg.get("crashed") and not self.job.cancel:
+                        line = f"the worker stopped unexpectedly (exit {rc})"
+                        self.job.add(prefix + line)
+                        keep(line)
                     continue
-                m = _DOWNLOAD_RE.match(line)
-                if m:
-                    pct = int(m["pct"]) if m["pct"] else None
-                    self.job.progress = {"what": m["what"], "mb": int(m["mb"]), "pct": pct}
-                    if not tag:
-                        name = self.job.dl_name or _DL_DEFAULT.get(m["what"], m["what"])
-                        self._set_phase(f"Downloaded {name}" if pct == 100 else
-                                        f"Downloading {name}… {f'{pct} % ' if pct is not None else ''}({m['mb']} MB)",
-                                        note=True)
-                    if pct is not None:
-                        if logged.get(m["what"]) == pct // 10:
-                            continue        # the log keeps one line per 10 %; the page shows the rest
-                        logged[m["what"]] = pct // 10
-                self.job.add(prefix + line)
-                if self.job.record is not None:
-                    self.job.record.track(tag, line)
-                if not tag and not m:
-                    self._data_phase(line.strip())
-                if tail is not None:
-                    tail.append(line.rstrip())
-                    del tail[:-40]
-            return proc.wait()
+                if ev == "error":
+                    err = f"{msg.get('type')}: {msg.get('message')}"
+                    for ln in (msg.get("traceback") or "").splitlines():
+                        self.job.add(prefix + ln)
+                    self.job.add(prefix + "ERROR: " + err)
+                    keep(err)
+                    continue
+                self._on_event(ev, msg, tag, group)
+                if ev == "download" and msg.get("pct") is not None:
+                    if logged.get(msg["what"]) == msg["pct"] // 10:
+                        continue        # the log keeps one line per 10 %; the page shows the rest
+                    logged[msg["what"]] = msg["pct"] // 10
+                line = events.text(ev, msg)
+                if line:
+                    self.job.add(prefix + line)
+                    keep(line)
+            return rc
         finally:
             with self.job.lock:
-                self.job.procs.discard(proc)
+                self.job.procs.discard(w)
 
-    def _set_phase(self, text: str | None, note: bool = False) -> None:
-        """What the data step is doing now (Tiles tab, Data view); with `note`, also written on the
-        data step of every tile still waiting for it (Build queue)."""
+    def _set_phase(self, text: str | None, note: bool = False, tiles: list[str] | None = None,
+                   group: str = "") -> None:
+        """What a data step is doing now (Tiles tab, Data view: every group's phase, joined); with
+        `note`, also written on the data step of its tiles still waiting for it (Build queue)."""
         j = self.job
-        j.phase = text
+        with j.lock:
+            g = j.group(group)
+            g["phase"] = text
+            j.phase = " · ".join(x["phase"] for x in j.groups.values() if x["phase"]) or None
         if note and text and j.record is not None:
-            j.record.data_note(text)
+            j.record.data_note(text, tiles if tiles is not None else g["tiles"])
 
-    def _data_phase(self, text: str) -> None:
-        """Turn the data step's log lines into a plain-words phase (downloads keep their %)."""
+    def _on_event(self, ev: str, d: dict, tag: str = "", group: str = "") -> None:
+        """One progress event from a worker: download %, plain-words phase, build steps."""
         j = self.job
-        if m := _COUNTRY_DL_RE.match(text):
-            j.dl_name = f"the OpenStreetMap file {m['url'].rsplit('/', 1)[-1]}"
-            self._set_phase(f"Downloading {j.dl_name}…", note=True)
-        elif text.startswith("ecoregions map missing: downloading"):
-            j.dl_name = _DL_DEFAULT["ecoregions"]
-            self._set_phase(f"Downloading {j.dl_name}…", note=True)
-        elif text.startswith("climate map missing: downloading"):
-            j.dl_name = _DL_DEFAULT["climate"]
-            self._set_phase(f"Downloading {j.dl_name}…", note=True)
-        elif m := _SAT_START_RE.match(text):
-            j.sat = [0, int(m["n"])]
-            self._set_phase(f"Getting satellite maps for {m['n']} tile(s)…")
-        elif _SAT_READY_RE.match(text):
-            j.sat[0] += 1
-            self._set_phase(f"Satellite maps: {j.sat[0]} of {j.sat[1]} tile(s) done")
-        elif m := _READING_RE.match(text):
+        if j.record is not None:
+            j.record.on_event(ev, d)
+        if tag:                            # a tile build: its steps are all the record needs
+            return
+        g = j.group(group)
+        if ev == "download":
+            pct = d.get("pct")
+            j.progress = {"what": d["what"], "mb": int(d["mb"]), "pct": pct}
+            name = g["dl_name"] or _DL_DEFAULT.get(d["what"], d["what"])
+            done = f"{pct} % " if pct is not None else ""
+            self._set_phase(f"Downloaded {name}" if pct == 100 else f"Downloading {name}… {done}({d['mb']} MB)",
+                            note=True, group=group)
+        elif ev == "downloading":
+            g["dl_name"] = d.get("name") or _DL_DEFAULT.get(d["what"], d["what"])
+            self._set_phase(f"Downloading {g['dl_name']}…", note=True, group=group)
+        elif ev == "sat_start":
+            g["sat"] = [0, int(d["n"])]
+            self._set_phase(f"Getting satellite maps for {d['n']} tile(s)…", group=group)
+        elif ev == "sat_tile":
+            g["sat"][0] += 1
+            self._set_phase(f"Satellite maps: {g['sat'][0]} of {g['sat'][1]} tile(s) done", group=group)
+        elif ev == "osm_reading":
             j.progress = None
-            self._set_phase(f"Reading OpenStreetMap ({m['file']}, {m['mb']} MB) for {m['n']} tile(s) — "
-                            "this can take a few minutes", note=True)
-        elif text.startswith(("OSM:", "ecoregions: ready", "climate map: ready")):
+            self._set_phase(f"Reading OpenStreetMap ({d['file']}, {d['mb']} MB) for {d['n']} tile(s) — "
+                            "this can take a few minutes", note=True, tiles=d.get("tiles"), group=group)
+        elif ev in ("osm_done", "ready"):
             j.progress = None
-            self._set_phase(None)
+            self._set_phase(None, group=group)
 
     def _build_one(self, name: str, profile: str, region: str) -> None:
         j = self.job
@@ -850,13 +868,13 @@ class Api:
             j.active.add(name)
             j.queue = [n for n in j.queue if n != name]
         j.add(f"=== {name}: building ({profile}, {region}) ===")
-        args = ["build", "--tile", name, "--profile", profile, "--region", region, "--compile"]
         tail: list[str] = []
         rc = 1
         # This runs in a thread pool whose futures nobody reads: an exception here would vanish
         # and leave the tile "building" forever, so every error ends as a failed tile.
         try:
-            rc = self._step(args, tag=name, tail=tail)
+            rc = self._task("build", {"tile": name, "profile": profile, "region": region, "compile": True},
+                            tag=name, tail=tail)
             if j.record is not None:
                 j.record.tile_finished(name, rc, tail, self._tile_result(name) if rc == 0 else None)
         except Exception as exc:  # noqa: BLE001 - report and carry on with the other tiles
@@ -883,25 +901,72 @@ class Api:
         return out
 
     def _run(self, names: list[str], profile: str, owners: dict[str, str], workers: int = 1) -> None:
-        from concurrent.futures import ThreadPoolExecutor
+        """Data, then builds. Tiles are split into groups that share no OSM country file
+        (regions.osm_groups); the groups' data steps run side by side and each group's tiles start
+        building as soon as its own data is ready. Data steps and builds share the `workers`
+        slots: reading a country file needs memory like a build does."""
+        from concurrent.futures import ThreadPoolExecutor, wait
+
+        from forest import regions
 
         j = self.job
         t_all = time.time()
         try:
-            # 1) Data for all tiles: satellite rasters (4 downloads at a time), OSM in ONE pass.
             j.current = "downloading data"
-            j.add(f"=== data for {len(names)} tile(s) ===")
-            if self._step(["fetch", "--tiles", ",".join(names)]) != 0:
-                j.add("some data is missing; those tiles will fail, the others are built")
+            groups = regions.osm_groups(names, owners)
+            j.add(f"=== data for {len(names)} tile(s) in {len(groups)} group(s); "
+                  f"{workers} at a time for data and builds ===")
+            # Files every country shares, once, before the groups run side by side.
+            if self._task("prepare", {"tiles": names}) != 0:
+                j.add("shared files could not be prepared; the builds may fail")
             if j.cancel:
                 j.add("cancelled")
                 return
-            # 2) Build tiles, `workers` at a time; a failure doesn't stop the others.
-            j.current, j.phase, j.progress = None, None, None
-            j.add(f"=== building {len(names)} tile(s), {workers} at a time ===")
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for name in names:
-                    pool.submit(self._build_one, name, profile, owners[name])
+            slots = threading.Semaphore(workers)
+            fetching = [len(groups)]
+            builds: list = []
+            pool = ThreadPoolExecutor(max_workers=workers + len(groups))
+
+            def build(name: str) -> None:
+                with slots:
+                    self._build_one(name, profile, owners[name])
+
+            def data(key: str, tiles: list[str]) -> None:
+                try:
+                    with slots:
+                        if j.cancel:
+                            return
+                        j.add(f"=== data for {key or ', '.join(tiles)} ===")
+                        if self._task("fetch", {"tiles": tiles}, group=key) != 0:
+                            j.add("some data is missing; those tiles will fail, the others are built")
+                    self._set_phase(None, group=key)
+                    if not j.cancel:
+                        builds.extend(pool.submit(build, n) for n in tiles)
+                except Exception as exc:  # noqa: BLE001 - nobody reads this future: fail its tiles
+                    j.add(f"ERROR in the data step: {type(exc).__name__}: {exc}")
+                    with j.lock:
+                        j.failed.extend(tiles)
+                        j.queue = [n for n in j.queue if n not in tiles]
+                    if j.record is not None:
+                        for n in tiles:
+                            j.record.step(n, "data", "failed", str(exc)[:200])
+                finally:
+                    with j.lock:
+                        fetching[0] -= 1
+                        if fetching[0] == 0:
+                            j.current = None
+
+            futs = []
+            for tiles in groups:
+                key = ""
+                if len(groups) > 1:
+                    key = ", ".join(tiles) if len(tiles) <= 3 else f"{tiles[0]} +{len(tiles) - 1}"
+                with j.lock:
+                    j.group(key)["tiles"] = list(tiles)
+                futs.append(pool.submit(data, key, tiles))
+            wait(futs)            # every group's data is done and its builds are queued
+            wait(list(builds))
+            pool.shutdown()
             if j.cancel:
                 j.add("cancelled — finished tiles are kept")
         finally:

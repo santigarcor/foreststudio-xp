@@ -131,7 +131,14 @@ def _pad3(pts: list) -> list:
 
 
 def _log(msg: str, t0: float) -> None:
-    print(f"[{time.time() - t0:7.1f}s] {msg}", flush=True)
+    from forest import events
+    events.log(f"[{time.time() - t0:7.1f}s] {msg}")
+
+
+def _step(tile: Tile, step: str, status: str) -> None:
+    """Build-step event for the app's Build queue (forest.events)."""
+    from forest import events
+    events.emit("step", tile=tile.name, step=step, status=status)
 
 
 def _class_share(cls: np.ndarray, src, grid: Grid, classes: tuple[int, ...]) -> np.ndarray:
@@ -264,6 +271,8 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     grid = Grid(tile, p["grid_cells"])
     paths = fetch_all(tile)
     _log("rasters cached", t0)
+    _step(tile, "data", "done")
+    _step(tile, "classify", "running")
 
     with rasterio.open(paths["worldcover"]) as src:
         wc = src.read(1)
@@ -724,6 +733,7 @@ def vectorize(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
                             density=c["levels"][v % 16],  # 0-1 for now; scaled in budget()
                         ))
     _log(f"vectorised {len(polys)} polygons", t0)
+    _step(c["grid"].tile, "vectorise", "done")
     return polys
 
 
@@ -960,6 +970,8 @@ def build_tile(tile: Tile, profile: str = "medium", region: str | None = None) -
     s = Settings.load(profile, region)
     c = classify(tile, s, t0)
     _log(f"classified: {c['tree_cells']:,} tree cells", t0)
+    _step(tile, "classify", "done")
+    _step(tile, "vectorise", "running")
     polys = vectorize(c, s, t0)
     extra = osm_trees(c, s, t0) + town_trees(c, s, t0)
     polys += extra

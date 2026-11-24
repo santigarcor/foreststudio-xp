@@ -4,22 +4,22 @@ from forest import jobs
 from forest.jobs import JobRecord
 
 
-def test_job_lifecycle_from_log_lines(sandbox):
+def test_job_lifecycle_from_events(sandbox):
     rec = JobRecord.new(["+06-076", "+06-075"], "medium", "colombia", 2)
     for t in rec.d["tiles"]:
         rec.step(t, "data", "running")
-    rec.track("", "+06-076: rasters ready (18 MB)")
-    rec.track("", "OSM: one pass for 2 tile(s) in 140 s")
+    rec.on_event("sat_tile", {"tile": "+06-076", "ok": True, "mb": 18})
+    rec.on_event("osm_done", {"n": 2, "seconds": 140})
     assert rec.d["steps"]["+06-076"]["data"]["status"] == "done"
-    rec.track("+06-076", "[    0.0s] rasters cached")
+    rec.on_event("step", {"tile": "+06-076", "step": "classify", "status": "running"})
     assert rec.d["steps"]["+06-076"]["classify"]["status"] == "running"
-    rec.track("+06-076", "[   24.0s] classified: 19,715,601 tree cells")
-    rec.track("+06-076", "[   44.0s] vectorised 95191 polygons")
-    rec.track("+06-076", "[   48.0s] wrote C:\\out\\studio_colombia\\+06-076.txt")
+    for s in ("classify", "vectorise"):
+        rec.on_event("step", {"tile": "+06-076", "step": s, "status": "done"})
+    rec.on_event("step", {"tile": "+06-076", "step": "compile", "status": "running"})
     assert rec.d["steps"]["+06-076"]["compile"]["status"] == "running"
     rec.tile_finished("+06-076", 0, [], {"forest_km2": 6000.0, "estimated_trees": 25_000_000,
                                          "polygons": 90_000, "dsf_mb": 13.0})
-    rec.track("+06-075", "[    0.0s] rasters cached")
+    rec.on_event("step", {"tile": "+06-075", "step": "classify", "status": "running"})
     rec.tile_finished("+06-075", 1, ["Traceback …", "ERROR: too many intervals in polygon"], None)
     st = rec.d["steps"]["+06-075"]
     assert st["classify"]["status"] == "failed" and "too many intervals" in st["classify"]["note"]

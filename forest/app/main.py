@@ -23,7 +23,11 @@ def _set_windows_app_id() -> None:
 
 
 def main() -> None:
+    import multiprocessing
+
     import webview
+
+    multiprocessing.freeze_support()   # packaged (PyInstaller) builds: workers start here, not a window
 
     from forest.app.api import Api
 
@@ -36,4 +40,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()   # a packaged app's workers start through this file too
     main()
