@@ -194,7 +194,7 @@ def _validate_bands(bands_in: list, evergreen: set[str], where: str) -> list[dic
         last = em
         for k in ("dense", "sparse"):
             if b[k] not in evergreen:
-                raise ValueError(f"{where} / {name} / {k}: {b[k]} is not an evergreen forest asset")
+                raise ValueError(f"{where} / {name} / {k}: {b[k]} is not an allowed forest type")
         bands.append({"name": name, "elev_max": em, "dense": b["dense"], "sparse": b["sparse"]})
     if not bands:
         raise ValueError(f"{where}: at least one band")
@@ -219,21 +219,25 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
         ecos = [str(e) for e in bm.get("ecoregions", [])]
         scrub = str(bm.get("scrub") or "")
         if scrub and scrub not in evergreen:
-            raise ValueError(f"{name} / scrub: {scrub} is not an evergreen forest asset")
+            raise ValueError(f"{name} / scrub: {scrub} is not an allowed forest type")
         town = str(bm.get("town_tree") or "")
         if town and town not in evergreen:
-            raise ValueError(f"{name} / town trees: {town} is not an evergreen forest asset")
-        biomes.append({"name": name, "label": str(bm.get("label", name)), "color": color,
-                       "ecoregions": ecos, "scrub": scrub, "scrub_on_bare": bool(bm.get("scrub_on_bare")),
-                       "town_tree": town, "band": _validate_bands(bm["band"], evergreen, name)})
+            raise ValueError(f"{name} / town trees: {town} is not an allowed forest type")
+        entry = {"name": name, "label": str(bm.get("label", name)), "color": color,
+                 "ecoregions": ecos, "scrub": scrub, "scrub_on_bare": bool(bm.get("scrub_on_bare")),
+                 "town_tree": town, "band": _validate_bands(bm["band"], evergreen, name)}
+        resolve = [str(e) for e in bm.get("resolve_biomes", []) if str(e).strip()]
+        if resolve:   # only when used, so older rules files (Colombia) keep their fingerprint
+            entry["resolve_biomes"] = resolve
+        biomes.append(entry)
     if "default" not in seen:
         raise ValueError('a biome named "default" is required (used for unlisted ecoregions)')
     single = data.get("single_tree") or biomes[0]["band"][0]["dense"]
     if single not in evergreen:
-        raise ValueError(f"single_tree: {single} is not an evergreen forest asset")
+        raise ValueError(f"single_tree: {single} is not an allowed forest type")
     town_tree = data.get("town_tree") or single
     if town_tree not in evergreen:
-        raise ValueError(f"town_tree: {town_tree} is not an evergreen forest asset")
+        raise ValueError(f"town_tree: {town_tree} is not an allowed forest type")
     plants, pseen = [], set()
     for pr in data.get("plantation", []):
         name = str(pr["name"]).strip()
@@ -242,7 +246,7 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
         pseen.add(name)
         asset = str(pr.get("asset") or "")
         if asset and asset not in evergreen:
-            raise ValueError(f"plantation {name}: {asset} is not an evergreen forest asset")
+            raise ValueError(f"plantation {name}: {asset} is not an allowed forest type")
         match = [str(m).strip() for m in pr.get("match", []) if str(m).strip()]
         if not match or not all("=" in part for m in match for part in m.split("&")):
             raise ValueError(f"plantation {name}: match entries must look like key=value (join with &)")
@@ -264,17 +268,25 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
     if not NAME_RE.match(region):
         raise ValueError("region name: lowercase letters, digits, - and _")
     d = validate_rules(data, evergreen)
+    try:
+        from forest import regions
+        only_evergreen = regions.get(region).evergreen_only
+    except ValueError:
+        only_evergreen = True
+    must = " (must be evergreen)" if only_evergreen else ""
     lines = [
         "# Forest types: biome (RESOLVE Ecoregions 2017) x elevation band (written by the app).",
-        "# Only evergreen assets: XP12 season rasters put the Andes in 'winter' for months.",
-        "# Ecoregions not listed in any biome use the \"default\" biome.",
+        ("# Only evergreen assets: XP12 season rasters can put tropical highlands in 'winter'."
+         if only_evergreen else "# Seasonal assets allowed in this region."),
+        "# An ecoregion uses the biome that lists it by name, else the first biome whose",
+        "# resolve_biomes holds its RESOLVE biome, else the \"default\" biome.",
         "",
         f"sparse_below = {_num(d['sparse_below'])}",
         "",
-        "# Asset for OSM single trees and tree rows (must be evergreen).",
+        f"# Asset for OSM single trees and tree rows{must}.",
         f"single_tree = {_q(d['single_tree'])}",
         "",
-        "# Town trees where a biome sets no town_tree (must be evergreen).",
+        f"# Town trees where a biome sets no town_tree{must}.",
         f"town_tree = {_q(d['town_tree'])}",
         "",
         "# Per biome: scrub = bush type (\"\" = none), scrub_on_bare = also on bare land,",
@@ -292,6 +304,8 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
         lines += ["", "[[biome]]", f"name = {_q(bm['name'])}", f"label = {_q(bm['label'])}",
                   f"color = [{', '.join(str(x) for x in bm['color'])}]",
                   "ecoregions = [" + ", ".join(_q(e) for e in bm["ecoregions"]) + "]",
+                  *(["resolve_biomes = [" + ", ".join(_q(e) for e in bm["resolve_biomes"]) + "]"]
+                    if bm.get("resolve_biomes") else []),
                   f"scrub = {_q(bm['scrub'])}", f"scrub_on_bare = {_num(bm['scrub_on_bare'])}",
                   f"town_tree = {_q(bm['town_tree'])}"]
         for b in bm["band"]:

@@ -179,8 +179,8 @@ const fmtDay = (t) => t ? new Date(t * 1000).toLocaleDateString([], { dateStyle:
 const fmtWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "–";
 let dataChecked = new Set();
 
-async function startDataJob(kind, tiles, force) {
-  const r = await api().start_data_job(kind, tiles || [], $("#region").value || S.default_region, !!force);
+async function startDataJob(kind, tiles, force, regionName) {
+  const r = await api().start_data_job(kind, tiles || [], regionName || $("#region").value || S.default_region, !!force);
   if (!r.ok) { msg("#dataMsg2", r.error, true); return r; }
   window._buildTotal = Math.max(1, r.tiles);
   if (typeof setRunning === "function") setRunning(true);
@@ -203,9 +203,11 @@ async function waitForDataJob() {   // refresh this page when the download finis
 async function refreshData() {
   const d = await api().data_status($("#region").value || S.default_region);
   const busyNow = d.busy;
+  renderRegions(busyNow);
+  const regionLabel = (S.region_info[$("#region").value || S.default_region] || {}).label || "";
   // OpenStreetMap card
   const o = d.osm, oc = $("#dcOsm"); oc.innerHTML = "";
-  oc.append(el("h3", {}, "OpenStreetMap (Geofabrik country file)"));
+  oc.append(el("h3", {}, `OpenStreetMap (${regionLabel}, Geofabrik file)`));
   oc.append(el("p", { class: "hint" }, "Roads, buildings, water, airports, parks, single trees and plantations. "
     + "Read once for all tiles of a build."));
   if (o.exists) {
@@ -232,7 +234,7 @@ async function refreshData() {
     };
     oc.append(el("div", { class: "row" }, chk, upd), res);
   } else {
-    oc.append(el("div", { class: "hint err" }, "Not downloaded yet (about 335 MB). It's downloaded automatically on the first build."));
+    oc.append(el("div", { class: "hint err" }, "Not downloaded yet (Colombia is about 335 MB). It's downloaded automatically on the first build."));
     const dl = el("button", { class: "primary" }, "Download now");
     dl.disabled = busyNow;
     dl.onclick = () => busy(dl, "Starting…", () => startDataJob("osm"));
@@ -287,6 +289,152 @@ function updateDataButtons() {
   $("#dataSelMap").disabled = !dataChecked.size;
   $("#dataDelete").disabled = !dataChecked.size;
   $("#dataDelete").textContent = dataChecked.size ? `Delete data of ${dataChecked.size} tile(s)…` : "Delete checked data…";
+}
+
+/* ---------------- Regions (Geofabrik's list of OpenStreetMap downloads) ---------------- */
+let geo = null;                       // geofabrik_list() result
+const geoSizes = {};                  // extract id -> MB
+let geoContinent = "", geoFilter = "";
+
+/* After adding / removing a region: new region list in the picker (keeps the current one). */
+async function applyRegions(r) {
+  S.regions = r.regions; S.region_info = r.region_info; S.default_region = r.default_region;
+  const cur = $("#region").value;
+  await fillSelect("#region", S.regions, S.regions.includes(cur) ? cur : S.default_region,
+    (n) => (S.region_info[n] || {}).label || n);
+  if (cur !== $("#region").value) $("#region").onchange();
+}
+
+function useRegion(name) {
+  $("#region").value = name;
+  $("#region").onchange();
+  showView("build");
+}
+
+async function renderRegions(busyNow) {
+  const box = $("#dataRegions");
+  if (!geo) geo = await api().geofabrik_list();
+  box.innerHTML = "";
+  box.append(el("h3", {}, "Regions"));
+  // Your regions
+  const mine = el("table", { class: "datatable" },
+    el("tr", {}, ...["Region", "Tiles", "Forest types", "OpenStreetMap", ""].map(h => el("th", {}, h))));
+  const added = {};
+  for (const e of geo.entries || []) if (e.added) added[e.added.region] = e;
+  for (const n of S.regions) {
+    const ri = S.region_info[n] || {};
+    const [w, s, e, nn] = ri.bounds || [0, 0, 0, 0];
+    const ntiles = ri.tiles ? ri.tiles.length : (e - w) * (nn - s);
+    const g = added[n];
+    const acts = el("div", { class: "row" });
+    const use = el("button", { class: "ghost" }, "Show on map");
+    use.onclick = () => useRegion(n);
+    acts.append(use);
+    if (g && !g.added.downloaded) {
+      const dl = el("button", { class: "ghost" }, "Download OSM");
+      dl.disabled = busyNow;
+      dl.onclick = () => busy(dl, "Starting…", () => startDataJob("osm", [], false, n));
+      acts.append(dl);
+    }
+    if (ri.user) {
+      const rm = el("button", { class: "ghost danger" }, "Remove");
+      rm.disabled = busyNow;
+      rm.onclick = () => {
+        if (!confirm(`Remove the region ${ri.label}?\n\nIts OpenStreetMap file and ecoregion cut-out are deleted. `
+          + "Its forest types, downloaded tile data and built tiles are kept (delete them in Build or Disk space).")) return;
+        busy(rm, "Removing…", async () => {
+          const r = await api().remove_region(n);
+          if (!r.ok) { msg("#dataMsg2", r.error, true); return; }
+          geo = null; await applyRegions(r); refreshData();
+        });
+      };
+      acts.append(rm);
+    }
+    const osmText = g ? (g.added.downloaded ? `downloaded${g.size ? ` · ${fmtMB(g.size / 1e6)}` : ""}` : "not downloaded")
+      : "see the OpenStreetMap card";
+    mine.append(el("tr", {}, el("td", {}, ri.label || n), el("td", {}, String(ntiles)),
+      el("td", {}, ri.evergreen_only === false ? "seasonal allowed" : "evergreen only"),
+      el("td", {}, osmText), el("td", {}, acts)));
+  }
+  box.append(mine);
+
+  // Add a region from Geofabrik's list
+  box.append(el("h4", {}, "Add a region"));
+  box.append(el("p", { class: "hint" }, "Pick a country or state from Geofabrik's list of OpenStreetMap downloads. "
+    + "The region gets the 1° tiles its outline touches and default forest types by biome (edit them in Build → "
+    + "Forest types). Regions between the tropics use evergreen trees only."));
+  if (!geo.has_index) {
+    const get = el("button", { class: "primary" }, "Download the list (3 MB)");
+    get.onclick = () => busy(get, "Downloading…", async () => {
+      const r = await api().geofabrik_download_index();
+      if (!r.ok) { msg("#dataMsg2", r.error, true); return; }
+      geo = r; renderRegions(busyNow);
+    });
+    box.append(el("div", { class: "row" }, get));
+    return;
+  }
+  const conts = geo.entries.filter(e => e.depth === 0);
+  if (!geoContinent) geoContinent = (conts.find(c => c.id === "south-america") || conts[0] || {}).id || "";
+  const sel = el("select", {});
+  for (const c of conts) sel.append(el("option", { value: c.id }, c.name));
+  sel.value = geoContinent;
+  sel.onchange = () => { geoContinent = sel.value; renderRegions(busyNow); };
+  const filt = el("input", { type: "search", placeholder: "Filter by name…" });
+  filt.value = geoFilter;
+  filt.oninput = () => { geoFilter = filt.value; drawList(); };
+  const sizesBtn = el("button", { class: "ghost" }, "Show download sizes");
+  const refresh = el("button", { class: "ghost", title: `List from ${fmtDay(geo.index_date)}` }, "Refresh list");
+  refresh.onclick = () => busy(refresh, "Downloading…", async () => {
+    const r = await api().geofabrik_download_index();
+    if (r.ok) { geo = r; renderRegions(busyNow); } else msg("#dataMsg2", r.error, true);
+  });
+  box.append(el("div", { class: "row" }, sel, filt, sizesBtn, refresh));
+  const listBox = el("div", { class: "geolist" });
+  box.append(listBox);
+
+  const visible = () => {
+    const f = geoFilter.trim().toLowerCase();
+    const c = geo.entries.find(e => e.id === geoContinent);
+    return [c, ...geo.entries.filter(e => e.continent === geoContinent && e.depth > 0)]
+      .filter(e => e && (!f || e.name.toLowerCase().includes(f)));
+  };
+  sizesBtn.onclick = () => busy(sizesBtn, "Asking Geofabrik…", async () => {
+    const ids = visible().map(e => e.id).filter(i => !(i in geoSizes));
+    const r = await api().geofabrik_sizes(ids);
+    Object.assign(geoSizes, r.sizes || {});
+    drawList();
+  });
+  function drawList() {
+    listBox.innerHTML = "";
+    const tbl = el("table", { class: "datatable" },
+      el("tr", {}, ...["Name", "Download", ""].map(h => el("th", {}, h))));
+    for (const e of visible()) {
+      const name = el("td", { style: `padding-left:${8 + 16 * e.depth}px` }, e.name,
+        e.children ? el("span", { class: "hint" }, ` · ${e.children} parts`) : "");
+      const mb = geoSizes[e.id];
+      const act = el("td", {});
+      if (e.added) {
+        act.append(el("span", { class: "hint" }, `added (${(S.region_info[e.added.region] || {}).label || e.added.region})`));
+      } else {
+        const add = el("button", { class: "ghost" }, "Add region");
+        add.onclick = () => {
+          if (e.depth === 0 && !confirm(`${e.name} is a whole continent: a very large download and many tiles. `
+            + "A country or state is usually better. Add it anyway?")) return;
+          busy(add, "Adding…", async () => {
+            const r = await api().add_region(e.id);
+            if (!r.ok) { msg("#dataMsg2", r.error, true); return; }
+            msg("#dataMsg2", `Added ${e.name}: ${r.tiles} tiles. Download its OpenStreetMap file in the list above, `
+              + "then pick it in Build (region list).");
+            geo = null; await applyRegions(r); refreshData();
+          });
+        };
+        act.append(add);
+      }
+      tbl.append(el("tr", {}, name, el("td", {}, mb ? fmtMB(mb) : (e.id in geoSizes ? "?" : "–")), act));
+    }
+    listBox.append(tbl);
+  }
+  drawList();
 }
 
 /* ---------------- busy buttons (spinner while an action runs) ---------------- */

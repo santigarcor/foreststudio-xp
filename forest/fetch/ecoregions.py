@@ -85,6 +85,12 @@ def ecoregion_names(region: str) -> list[str]:
     return sorted({f["properties"]["eco_name"] for f in load_features(region)})
 
 
+def ecoregion_biome_names(region: str) -> dict[str, str]:
+    """Ecoregion name → its RESOLVE biome name (e.g. "Tropical & Subtropical Moist Broadleaf Forests")."""
+    return {f["properties"]["eco_name"]: f["properties"].get("biome_name") or ""
+            for f in load_features(region)}
+
+
 def ecoregion_raster(tile, grid, region: str) -> tuple[np.ndarray, dict[int, str]]:
     """ECO_ID per grid cell (0 = none) and an id → name map for this tile."""
     from rasterio.features import rasterize

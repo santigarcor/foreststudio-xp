@@ -55,7 +55,7 @@ def test_rules_roundtrip_with_biomes_and_plantations(sandbox, real_rules):
 
 def test_rules_reject_seasonal_assets(real_rules):
     evergreen = rules_assets(real_rules) - {"lib/vegetation/forests/mixed/very_hot.for"}
-    with pytest.raises(ValueError, match="not an evergreen"):
+    with pytest.raises(ValueError, match="not an allowed"):
         st.validate_rules(real_rules, evergreen)
 
 

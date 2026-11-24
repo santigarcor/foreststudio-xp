@@ -64,7 +64,6 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     tiles = _tiles(args)
     region = args.region
-    pbf = regions.get(region).osm_file
     _ensure_country_files(region)
 
     def one(tile):
@@ -89,10 +88,12 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001 - report and continue with the others
                 failed.append(t.name)
                 print(f"{t.name}: data download FAILED: {exc}", flush=True)
-    # OpenStreetMap: one pass over the country file for every tile that needs it.
-    if pbf.exists():
+    # OpenStreetMap: one pass over each country file for every tile that needs it (border tiles
+    # read every downloaded file that covers them).
+    with_pbf = [t for t in tiles if regions.osm_sources(t, region)]
+    if with_pbf:
         t0 = time.time()
-        counts = extract_tiles(tiles, pbf)
+        counts = extract_tiles(with_pbf, region=region)
         if counts:
             secs = round(time.time() - t0, 1)
             mbs = [fsutil.size_mb(next(t for t in tiles if t.name == n).cache / "osm.json") for n in counts]
@@ -101,9 +102,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"OSM: one pass for {len(counts)} tile(s) in {secs:.0f} s", flush=True)
         else:
             print("OSM: already up to date", flush=True)
-    else:
-        for tile in tiles:
-            fetch_osm(tile, region)
+    for tile in tiles:
+        if tile not in with_pbf:
+            fetch_osm(tile, region)   # no local file covers it: Overpass
     if failed:
         print(f"data missing for: {', '.join(sorted(failed))}", flush=True)
         return 3
@@ -163,12 +164,13 @@ def cmd_data(args: argparse.Namespace) -> int:
                 return 0
         print(f"OSM country file: downloading {url}", flush=True)
         sources.download(url, pbf, sources.print_progress("OSM"))
-    # Tiles of this region that already have OSM data are re-extracted from the new file.
+    # Tiles that already have OSM data and are covered by the new file are re-extracted (with every
+    # other downloaded file covering them, so border tiles keep both countries).
     tiles = [t for t in (Tile.parse(d.name) for d in sorted(CACHE.glob("*")) if (d / "osm.json").exists())
-             if region.contains(t)]
+             if pbf in regions.osm_sources(t, region.name if region.contains(t) else None)]
     if tiles:
         t0 = time.time()
-        extract_tiles(tiles, pbf, force=True)
+        extract_tiles(tiles, force=True, region=region.name)
         print(f"OSM: one pass for {len(tiles)} tile(s) in {time.time() - t0:.0f} s", flush=True)
     return 0
 

@@ -2,9 +2,10 @@
 
 A standalone Windows desktop app (Python backend + HTML/JS UI in a pywebview window) that builds
 **X-Plane 12 forest overlay scenery** from satellite land cover, biome maps and OpenStreetMap,
-starting with **Colombia**. It is meant to become an open-source project (repo:
-https://github.com/santigarcor/foreststudio-xp, license GPL-3.0); more regions will be added later
-(**do not add other regions unless asked**).
+starting with **Colombia**; other countries can be added from Geofabrik's list (Data view →
+Regions). It is meant to become an open-source project (repo:
+https://github.com/santigarcor/foreststudio-xp, license GPL-3.0); do not ship more regions in the repo unless asked
+(users add their own in the app).
 
 `PLAN.md` is the detailed historical log of every decision, measurement and finding (dated). This
 file is the authoritative summary; keep both up to date when something important changes.
@@ -116,7 +117,9 @@ forest/
   datafolder.py    Settings → Data folder: check / move / switch, re-point links, location.toml
   credits.py       data + software credits (Settings → About) and the pack's CREDITS.txt
   regions.py       Region files (config/regions/<name>.toml): label, bounds (map tiles), ecoregion
-                   cut-out box, Geofabrik osm_url, evergreen_only; names()/get()/default_name()
+                   cut-out box, Geofabrik osm_url, evergreen_only, optional tiles list;
+                   names()/get()/default_name(); template_rules_text (global rules);
+                   add_from_geofabrik / remove; osm_sources(tile) = every downloaded extract covering it
   tiles.py         Tile (1°×1°, name "+06-076", 10° folder "+00-080"), Grid (north-up raster)
                    Tile.cache creates the folder (write); Tile.cache_path never does (read/check)
   paths.py         <data>/out/forest_<region>/Earth nav data/…/<tile>.dsf (the pack) vs
@@ -125,6 +128,8 @@ forest/
     sources.py     country-wide files: Geofabrik .pbf + RESOLVE zip — download (.part → rename,
                    `<file>.json` meta: server date/size/downloaded), status, check_update (HEAD)
     rasters.py     ESA WorldCover 2021 (COG windows), Hansen GFC v1.12 treecover2000 + lossyear
+    geofabrik.py   Geofabrik index-v1.json (cache/osm/geofabrik-index.json): tree of extracts,
+                   tiles an extract's outline touches, region file text, sizes (HEAD)
     osm_pbf.py     ONE pass over the Geofabrik .pbf → streams elements into every requested tile's
                    osm.json (format VERSION 4; old versions re-extracted automatically)
     osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
@@ -265,7 +270,9 @@ old records without them load as builds. Only one job (build or download) runs a
 - **Build queue** (internal id `works`; the open log keeps updating without closing): saved jobs (search by tile), progress, per-tile step bars, log, final report,
   per-step table, errors; delete job / clear all. Download jobs show as "Download data" /
   "Update OSM data".
-- **Data**: cards for the OSM country file (size, map-data date, downloaded date; Download /
+- **Data**: **Regions** (your regions: tiles, evergreen/seasonal, OSM file, Show on map / Download OSM /
+  Remove for added ones; Add a region from Geofabrik's list: continent picker, filter, Show download
+  sizes, Refresh list); cards for the selected region's OSM file (size, map-data date, downloaded date; Download /
   Check for update → Update OSM data), ecoregions (Download), satellite (fixed releases, nothing to
   update); table of tiles with data (satellite / OSM date, flagged when older than the country file /
   elevation / size / built) with Download for map selection, Select checked on map, Delete checked data.
@@ -329,12 +336,37 @@ A region's name names its forest types (`config/rules/<name>.toml`), its pack (`
 its OSM file and its ecoregion cut-out. Keys: `label`, `bounds = [w, s, e, n]` (whole degrees: the
 tiles offered on the map), optional `ecoregion_bounds` (cut-out box, default bounds + 1°; Colombia
 keeps its old box so tiles stay identical), `osm_url` (Geofabrik `.osm.pbf`), `evergreen_only`
-(Colombia true: rule 3; false lets rules and builds use seasonal types). Shipped files in
-`<code>/config/regions/`, the user's in `<data>/config/regions/` (same name wins). Only Colombia
-exists (**do not add regions unless asked**). Not done yet: global default rules by RESOLVE biome,
-border tiles needing two OSM extracts (a tile's `osm.json` comes from one region's file), several
-OSM files per region, per-region scenery-order advice. The tile cache (`cache/tiles/`) is shared by
-all regions; built tiles are per region (`out/forest_<region>`, `out/studio_<region>`).
+(Colombia true: rule 3; false lets rules and builds use seasonal types), optional `tiles = [...]`
+(only these tiles of the bounds) and `geofabrik_id`. Shipped files in `<code>/config/regions/`
+(only Colombia), the user's in `<data>/config/regions/` (same name wins). The tile cache
+(`cache/tiles/`) is shared by all regions; built tiles are per region (`out/forest_<region>`,
+`out/studio_<region>`).
+
+- **Adding a region** (Data → Regions): downloads Geofabrik's `index-v1.json` (3.4 MB, on request)
+  and writes `<data>/config/regions/<id>.toml` with the tiles the extract's outline touches,
+  `evergreen_only = true` when the outline's centroid is within ±23.5° (rule 3 spirit: XP12 seasons
+  in tropical highlands). Remove deletes the region file, its OSM file (unless another region uses
+  it) and its ecoregion cut-out; forest types and built tiles stay. Shipped regions can't be removed.
+- **Global default rules** `config/rules/_global.toml` (a template: files starting with `_` are not
+  copied to the user's config): one biome per RESOLVE biome via `resolve_biomes`, plantations incl.
+  temperate crops, mangrove + default. A region without rules gets a copy on first use
+  (`config.rules_path` → `regions.template_rules_text`): `{label}` filled in, and in evergreen-only
+  regions every seasonal type replaced by its `[evergreen_swap]` partner (the table isn't copied).
+  Biome per cell: ecoregion listed by name → first biome whose `resolve_biomes` holds the
+  ecoregion's RESOLVE biome (RESOLVE "Mangroves" polygons → tropical_moist, they reach inland) →
+  `default`. `resolve_biomes` is written only when non-empty (Colombia's rules/fingerprint unchanged).
+- **Border tiles**: `regions.osm_sources(tile, region)` = every downloaded extract whose Geofabrik
+  outline (or, without the index, region tiles) covers the tile, plus the building region's own.
+  `extract_tiles` makes one pass per file into shared writers, dedupes by (type, id) when there are
+  several files, and records `"sources"` in the osm.json header (single-file tiles keep the old
+  header); `is_current(tile, sources)` re-extracts when the set of files changes (adding Panama
+  re-extracts Colombia's border tiles on their next fetch, which makes them outdated).
+- Verified 2026-11-23 (scratch folder): Panama +08-080 (all evergreen, 986 km² forest), Luxembourg
+  +49+006 (seasonal temperate types, conifer plantations from OSM `leaf_type=needleleaved`),
+  border +07-078 from both files (Panama adds 1,083 features, 138 shared written once); Colombia
+  +10-076 / +06-076 byte-identical.
+- Not done yet: per-region scenery-order advice (X-World packs differ per continent), regions
+  crossing ±180°, very large extracts (a continent: one osm.json pass reads the whole file).
 
 ## Rules file (`config/rules/colombia.toml`)
 
@@ -411,7 +443,8 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 - OSM multipolygon holes are dropped: ~80 km² of forest on river islands (+07-074, +06-075) is cut
   as water. Fix parked (changes tiles; see PLAN.md 2026-11-21).
 - Test on a real Mac / Linux machine (only CI so far).
-- Other regions (Phase 4) — only when asked.
+- Other regions: owners check the global default forest types in the sim (temperate seasons,
+  boreal, Mediterranean, desert scrub) and tune `config/rules/_global.toml`.
 - **Not wanted** (owner, 2026-11-21): a "select all Colombia" button (tiles are selected by hand);
   tree height (too much work for the gain); sharper edges from ortho imagery; resuming an
   interrupted/cancelled job.

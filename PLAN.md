@@ -488,3 +488,25 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   byte-identical, stats equal except build time; the Colombia ecoregion cut-out remade from the zip
   is byte-identical to the one made by the old code. The app (dev server) shows 288 tiles, 59
   ecoregions, 5/5 setup checks.
+
+### 2026-11-23 — Other regions: global rules, Geofabrik regions, border tiles
+
+- Owner wants to try other regions. Done: (1) global default forest types by RESOLVE biome,
+  (2) Data view → Regions built from Geofabrik's index (continent → country → state, sizes by HEAD,
+  Add / Download OSM / Remove), (3) border tiles read every downloaded extract covering them,
+  (4) end-to-end test of Panama (tropical) and Luxembourg (temperate) in a scratch data folder.
+- `config/rules/_global.toml`: 15 biomes (14 RESOLVE + mangrove from WorldCover/OSM + default).
+  Tropical biomes reuse the Colombia evergreen types; temperate/boreal/Mediterranean use XP12's
+  seasonal types (`broadleaves|mixed|conifers/{temperate,cold,cold_low,warm_dry}`, `lib/g8/*_tmp_*`).
+  `[evergreen_swap]` maps each seasonal type to an evergreen one for evergreen-only regions.
+  Every asset exists in this install's catalog; the swapped template has no seasonal types left
+  and both versions pass `validate_rules`.
+- Evergreen-only for added regions = outline centroid within ±23.5° (Panama yes, Luxembourg no).
+- First Panama build put 74 km² in `default`: RESOLVE "Mangroves" ecoregions have no biome in the
+  template (in Colombia they were reassigned by hand because they reach inland). Fix: tropical_moist
+  also takes RESOLVE "Mangroves"; the real mangroves still come from WorldCover/OSM. Left: 34 km² of
+  coast/islands outside every ecoregion polygon (default = evergreen swap there).
+- Results: Panama +08-080 986 km² forest, 4.3 M trees; Luxembourg +49+006 3,418 km², 15.9 M trees,
+  381k conifer-plantation cells from OSM `leaf_type=needleleaved`; +07-078 (Colombia/Panama) from
+  both files: 7,899 + 1,221 elements, 138 in both, 8,982 written. OSM pass with two files: 147 s.
+- Colombia unchanged: +10-076 DSF text + PNGs and +06-076 compiled DSF + PNGs byte-identical.

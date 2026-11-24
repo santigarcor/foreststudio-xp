@@ -24,14 +24,17 @@ class Region:
     osm_url: str                              # Geofabrik extract covering the bounds
     evergreen_only: bool = True               # refuse forest types with seasonal variants
     ecoregion_bounds: tuple[float, float, float, float] | None = None   # default: bounds + 1°
+    tile_names: frozenset[str] | None = None  # optional explicit tiles (regions added from Geofabrik)
+    geofabrik_id: str = ""                     # the extract it was added from (Data view → Regions)
 
     def tiles(self) -> list[Tile]:
         w, s, e, n = self.bounds
-        return [Tile(lat, lon) for lat in range(s, n) for lon in range(w, e)]
+        return [t for lat in range(s, n) for lon in range(w, e) if self.contains(t := Tile(lat, lon))]
 
     def contains(self, tile: Tile) -> bool:
         w, s, e, n = self.bounds
-        return w <= tile.lon < e and s <= tile.lat < n
+        inside = w <= tile.lon < e and s <= tile.lat < n
+        return inside and (self.tile_names is None or tile.name in self.tile_names)
 
     @property
     def clip_bounds(self) -> tuple[float, float, float, float]:
@@ -49,7 +52,8 @@ class Region:
     def info(self) -> dict:
         """What the app needs to know about the region."""
         return {"name": self.name, "label": self.label, "bounds": list(self.bounds),
-                "evergreen_only": self.evergreen_only}
+                "evergreen_only": self.evergreen_only, "user": is_user_region(self.name),
+                "tiles": sorted(self.tile_names) if self.tile_names is not None else None}
 
 
 def _dirs() -> list[Path]:
@@ -93,6 +97,14 @@ def parse(name: str, data: dict) -> Region:
     if not url.startswith("https://") or not url.endswith(".osm.pbf"):
         raise ValueError(f"{where}: osm_url must be an https:// link to a .osm.pbf file")
     eb = data.get("ecoregion_bounds")
+    tl = data.get("tiles")
+    if tl is not None:
+        if not isinstance(tl, list):
+            raise ValueError(f"{where}: tiles must be a list of tile names like \"+06-076\"")
+        try:
+            tl = frozenset(Tile.parse(str(x)).name for x in tl)
+        except ValueError as e:
+            raise ValueError(f"{where}: tiles: {e}") from None
     return Region(
         name=name,
         label=str(data.get("label") or name.replace("_", " ").title()),
@@ -100,6 +112,8 @@ def parse(name: str, data: dict) -> Region:
         osm_url=url,
         evergreen_only=bool(data.get("evergreen_only", True)),
         ecoregion_bounds=_box(eb, f"{where}: ecoregion_bounds", whole=False) if eb is not None else None,
+        tile_names=tl,
+        geofabrik_id=str(data.get("geofabrik_id", "")),
     )
 
 
@@ -108,3 +122,89 @@ def get(name: str) -> Region:
     if f is None:
         raise ValueError(f"unknown region {name!r} (known: {', '.join(names()) or 'none'})")
     return parse(name, tomllib.loads(f.read_text(encoding="utf-8")))
+
+
+def is_user_region(name: str) -> bool:
+    """True for a region the user added (no shipped file of that name)."""
+    return not (config.DEFAULTS_DIR / "regions" / f"{name}.toml").exists()
+
+
+SWAP_MARKER = "# --- evergreen_swap"
+
+
+def template_rules_text(region: Region) -> str:
+    """Forest types for a region without hand-made rules: the global defaults by RESOLVE biome
+    (config/rules/_global.toml). Evergreen-only regions get evergreen types instead of seasonal
+    ones (the template's [evergreen_swap] table); the table itself is not copied."""
+    text = (config.DEFAULTS_DIR / "rules" / "_global.toml").read_text(encoding="utf-8")
+    swap = tomllib.loads(text).get("evergreen_swap", {})
+    head = text.split(SWAP_MARKER, 1)[0].rstrip() + "\n"
+    head = head.replace("{label}", region.label)
+    if region.evergreen_only:
+        for seasonal, evergreen in swap.items():
+            head = head.replace(f'"{seasonal}"', f'"{evergreen}"')
+    return head
+
+
+def add_from_geofabrik(eid: str) -> Region:
+    """Write <data>/config/regions/<id>.toml for a Geofabrik extract (an existing file is kept)."""
+    from forest.fetch import geofabrik
+
+    name = geofabrik.region_name(eid)
+    if name in names():
+        return get(name)
+    d = config.USER_CONFIG / "regions"
+    d.mkdir(parents=True, exist_ok=True)
+    text = geofabrik.region_toml(eid)
+    parse(name, tomllib.loads(text))           # refuse before writing anything bad
+    (d / f"{name}.toml").write_text(text, encoding="utf-8")
+    return get(name)
+
+
+def remove(name: str) -> list[str]:
+    """Delete a region the user added: its file, its OSM download (unless another region uses the
+    same file) and its ecoregion cut-out. Forest types and built tiles stay. Returns what went."""
+    if not is_user_region(name):
+        raise ValueError(f"{name} is shipped with ForestStudio and can't be removed")
+    r = get(name)
+    gone = []
+    others = [get(n) for n in names() if n != name]
+    if not any(o.osm_file == r.osm_file for o in others):
+        from forest.fetch import sources
+        for p in (r.osm_file, sources._meta_path(r.osm_file)):
+            if p.exists():
+                p.unlink()
+                gone.append(p.name)
+    from forest.fetch.ecoregions import clipped_path
+    cp = clipped_path(name)
+    if cp.exists():
+        cp.unlink()
+        gone.append(cp.name)
+    f = config.USER_CONFIG / "regions" / f"{name}.toml"
+    f.unlink()
+    gone.append(f.name)
+    return gone
+
+
+def _covers(r: Region, tile: Tile) -> bool:
+    """Does the region's OSM extract cover the tile? Geofabrik's outline when its list is
+    downloaded and knows the file, else the region's own tiles."""
+    from forest.fetch import geofabrik
+
+    e = geofabrik.by_file_name().get(r.osm_file.name)
+    return tile.name in geofabrik.tiles_of(e["id"]) if e else r.contains(tile)
+
+
+def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
+    """Every downloaded OSM extract that covers the tile (a tile on a border needs both
+    countries' files), plus the given region's own file when downloaded. Sorted by file name."""
+    out: dict[str, Path] = {}
+    for n in names():
+        try:
+            r = get(n)
+        except ValueError:
+            continue
+        f = r.osm_file
+        if f.exists() and f.name not in out and (n == region or _covers(r, tile)):
+            out[f.name] = f
+    return [out[k] for k in sorted(out)]

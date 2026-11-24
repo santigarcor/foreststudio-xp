@@ -1,0 +1,366 @@
+# Default forest types for any region without hand-made rules (written for "{label}").
+# Biomes follow the 14 RESOLVE Ecoregions 2017 biomes (`resolve_biomes`): every ecoregion of that
+# biome gets these types unless a biome lists the ecoregion by name (`ecoregions`, which wins).
+# Tropical biomes use the evergreen types tuned for Colombia; temperate, boreal and Mediterranean
+# biomes use X-Plane's seasonal types (they change with the seasons, as the real forests do).
+# Elevation bands are in metres. Edit everything in the app (Build → Forest types).
+#
+# A cell uses `dense` when its tree density >= sparse_below, otherwise `sparse`.
+
+sparse_below = 0.45
+
+# OSM single trees and tree rows.
+single_tree = "lib/vegetation/forests/mixed/temperate.for"
+
+# Scattered town trees (built-up / residential land) where a biome sets no `town_tree`.
+town_tree = "lib/vegetation/forests/mixed/temperate.for"
+
+# Plantations from OpenStreetMap: first matching rule wins; match = key=value, & joins
+# conditions; asset = "" means no trees.
+
+[[plantation]]
+name = "oil_palm"
+label = "Oil palm"
+color = [230, 120, 40]
+match = ["trees=oil_palms", "genus=Elaeis", "crop=palm_fruit", "crop=oil_palm", "produce=palm_oil"]
+asset = "lib/vegetation/trees/palm/date_palm_small.for"
+density = 0.8
+
+[[plantation]]
+name = "coconut"
+label = "Coconut palm"
+color = [240, 200, 80]
+match = ["trees=coconut_palms", "crop=coconut", "produce=coconut"]
+asset = "lib/vegetation/trees/palm/coconut_palm_medium.for"
+density = 0.7
+
+[[plantation]]
+name = "banana"
+label = "Banana / plantain"
+color = [200, 230, 60]
+match = ["trees=banana_plants", "crop=banana", "crop=plantain", "produce=banana"]
+asset = "lib/vegetation/trees/evergreen/banana_plant.for"
+density = 0.7
+
+[[plantation]]
+name = "rubber"
+label = "Rubber"
+color = [120, 110, 200]
+match = ["trees=rubber_trees", "genus=Hevea"]
+asset = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"
+density = 0.6
+
+[[plantation]]
+name = "conifer"
+label = "Conifer plantation / forest"
+color = [70, 120, 160]
+match = ["landuse=forest&leaf_type=needleleaved", "genus=Pinus", "genus=Picea", "trees=pine_trees"]
+asset = "lib/vegetation/trees/coniferous/pine_medium.for"
+density = 0.7
+
+[[plantation]]
+name = "eucalyptus"
+label = "Eucalyptus"
+color = [110, 170, 190]
+match = ["genus=Eucalyptus", "trees=eucalyptus_trees"]
+asset = "lib/vegetation/trees/evergreen/kapok_tree_thin.for"
+density = 0.7
+
+[[plantation]]
+name = "no_trees"
+label = "Crops without trees"
+color = [200, 200, 200]
+match = ["crop=sugarcane", "trees=pineapple_plants", "crop=pineapple", "crop=rice", "crop=corn",
+  "crop=maize", "crop=soy", "crop=wheat", "crop=barley", "crop=rape", "crop=sunflower",
+  "crop=potato", "crop=sugar_beet", "crop=grass", "crop=meadow"]
+asset = ""
+density = 0.0
+
+[[plantation]]
+name = "orchard"
+label = "Orchards (fruit trees)"
+color = [210, 90, 150]
+match = ["landuse=orchard", "landuse=plantation"]
+asset = "lib/g8/orch_tmp_wet.for"
+density = 0.5
+
+[[biome]]
+name = "tropical_moist"
+label = "Tropical moist forest"
+color = [30, 140, 60]
+ecoregions = []
+# RESOLVE's mangrove ecoregions reach far inland, so their land gets this biome; the real
+# mangroves (WorldCover / OSM) use the "mangrove" biome below.
+resolve_biomes = ["Tropical & Subtropical Moist Broadleaf Forests", "Mangroves"]
+scrub = "lib/g8/shrb_vhot_rain.for"
+town_tree = "lib/vegetation/forests/mixed/very_hot.for"
+[[biome.band]]
+name = "lowland"
+elev_max = 1200
+dense = "lib/g8/rainforest_vhot_rain.for"
+sparse = "lib/g8/broad_sp_vhot_wet.for"
+[[biome.band]]
+name = "montane"
+elev_max = 2800
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/mixed_sp_vhot_wet.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/g8/coni_sp_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_dry.for"
+
+[[biome]]
+name = "tropical_dry"
+label = "Tropical dry forest"
+color = [170, 150, 60]
+ecoregions = []
+resolve_biomes = ["Tropical & Subtropical Dry Broadleaf Forests"]
+scrub = "lib/g8/shrb_hot_sdry.for"
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
+[[biome.band]]
+name = "valley"
+elev_max = 1500
+dense = "lib/vegetation/forests/broadleaves/hot_dry.for"
+sparse = "lib/g8/broad_sp_hot_sdry.for"
+[[biome.band]]
+name = "slopes"
+elev_max = 9000
+dense = "lib/vegetation/forests/mixed/very_hot.for"
+sparse = "lib/g8/mixed_sp_vhot_wet.for"
+
+[[biome]]
+name = "tropical_conifer"
+label = "Tropical pine forest"
+color = [80, 130, 110]
+ecoregions = []
+resolve_biomes = ["Tropical & Subtropical Coniferous Forests"]
+scrub = "lib/g8/shrb_hot_sdry.for"
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/hot_dry.for"
+sparse = "lib/g8/coni_sp_hot_sdry.for"
+
+[[biome]]
+name = "tropical_savanna"
+label = "Tropical savanna"
+color = [190, 170, 90]
+ecoregions = []
+resolve_biomes = ["Tropical & Subtropical Grasslands, Savannas & Shrublands"]
+scrub = "lib/g8/shrb_vhot_sdry.for"
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/broad_vhot_wet.for"
+sparse = "lib/g8/sparse_tr_vhot_sdry.for"
+
+[[biome]]
+name = "temperate_broadleaf"
+label = "Temperate broadleaf & mixed forest"
+color = [60, 150, 90]
+ecoregions = []
+resolve_biomes = ["Temperate Broadleaf & Mixed Forests"]
+scrub = "lib/g8/shrb_tmp_wet.for"
+town_tree = "lib/vegetation/forests/broadleaves/temperate.for"
+[[biome.band]]
+name = "lowland"
+elev_max = 800
+dense = "lib/vegetation/forests/broadleaves/temperate.for"
+sparse = "lib/g8/broad_sp_tmp_wet.for"
+[[biome.band]]
+name = "hills"
+elev_max = 1500
+dense = "lib/vegetation/forests/mixed/temperate.for"
+sparse = "lib/g8/mixed_sp_tmp_wet.for"
+[[biome.band]]
+name = "mountains"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/temperate.for"
+sparse = "lib/g8/coni_sp_tmp_wet.for"
+
+[[biome]]
+name = "temperate_conifer"
+label = "Temperate conifer forest"
+color = [40, 110, 90]
+ecoregions = []
+resolve_biomes = ["Temperate Conifer Forests"]
+scrub = "lib/g8/shrb_tmp_dry.for"
+town_tree = "lib/vegetation/forests/mixed/temperate.for"
+[[biome.band]]
+name = "low"
+elev_max = 1600
+dense = "lib/vegetation/forests/conifers/temperate.for"
+sparse = "lib/g8/coni_sp_tmp_dry.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/cold.for"
+sparse = "lib/vegetation/forests/conifers/cold_low.for"
+
+[[biome]]
+name = "boreal"
+label = "Boreal forest / taiga"
+color = [50, 100, 110]
+ecoregions = []
+resolve_biomes = ["Boreal Forests/Taiga"]
+scrub = ""
+town_tree = "lib/vegetation/forests/mixed/cold.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/cold.for"
+sparse = "lib/vegetation/forests/conifers/cold_low.for"
+
+[[biome]]
+name = "temperate_grassland"
+label = "Temperate grassland & steppe"
+color = [170, 180, 110]
+ecoregions = []
+resolve_biomes = ["Temperate Grasslands, Savannas & Shrublands"]
+scrub = "lib/g8/shrb_tmp_dry.for"
+town_tree = "lib/vegetation/forests/broadleaves/temperate.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/vegetation/forests/broadleaves/warm_dry.for"
+sparse = "lib/g8/broad_sp_tmp_dry.for"
+
+[[biome]]
+name = "flooded_grassland"
+label = "Flooded grassland & swamp forest"
+color = [60, 150, 150]
+ecoregions = []
+resolve_biomes = ["Flooded Grasslands & Savannas"]
+scrub = "lib/g8/wetl_shrb_vhot_wet.for"
+town_tree = "lib/vegetation/forests/mixed/very_hot.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/wetl_wdy_vhot_rain.for"
+sparse = "lib/g8/wetl_shrb_vhot_wet.for"
+
+[[biome]]
+name = "montane_grassland"
+label = "High mountain grassland (páramo, puna, alpine)"
+color = [185, 180, 140]
+ecoregions = []
+resolve_biomes = ["Montane Grasslands & Shrublands"]
+scrub = ""
+town_tree = "lib/vegetation/forests/mixed/cold.for"
+[[biome.band]]
+name = "upper forest"
+elev_max = 3200
+dense = "lib/vegetation/forests/mixed/cold.for"
+sparse = "lib/g8/coni_sp_tmp_dry.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/cold_low.for"
+sparse = "lib/g8/coni_sp_tmp_dry.for"
+
+[[biome]]
+name = "tundra"
+label = "Tundra"
+color = [150, 160, 150]
+ecoregions = []
+resolve_biomes = ["Tundra"]
+scrub = ""
+town_tree = "lib/vegetation/forests/mixed/cold_low.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/cold_low.for"
+sparse = "lib/vegetation/forests/conifers/cold_low.for"
+
+[[biome]]
+name = "mediterranean"
+label = "Mediterranean woodland & scrub"
+color = [150, 160, 70]
+ecoregions = []
+resolve_biomes = ["Mediterranean Forests, Woodlands & Scrub"]
+scrub = "lib/g8/shrb_wrm_sdry.for"
+town_tree = "lib/vegetation/forests/mixed/warm_dry.for"
+[[biome.band]]
+name = "low"
+elev_max = 1000
+dense = "lib/vegetation/forests/mixed/warm_dry.for"
+sparse = "lib/g8/mixed_sp_wrm_sdry.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/warm_dry.for"
+sparse = "lib/g8/coni_sp_wrm_sdry.for"
+
+[[biome]]
+name = "desert"
+label = "Desert & xeric scrub"
+color = [210, 180, 120]
+ecoregions = []
+resolve_biomes = ["Deserts & Xeric Shrublands"]
+scrub = "lib/g8/shrb_hot_dry.for"
+scrub_on_bare = true
+town_tree = "lib/vegetation/forests/broadleaves/hot_dry.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/vegetation/forests/broadleaves/hot_dry.for"
+sparse = "lib/g8/broad_sp_hot_sdry.for"
+
+[[biome]]
+name = "mangrove"
+label = "Mangroves (WorldCover's mangrove class and OSM mangroves)"
+color = [40, 160, 170]
+# Filled from WorldCover / OSM mangroves, not from ecoregions.
+ecoregions = []
+scrub = "lib/g8/wetl_shrb_vhot_wet.for"
+[[biome.band]]
+name = "all"
+elev_max = 9000
+dense = "lib/g8/wetl_wdy_vhot_rain.for"
+sparse = "lib/g8/wetl_shrb_vhot_wet.for"
+
+[[biome]]
+name = "default"
+label = "Everything else (rock & ice, unknown)"
+color = [110, 140, 110]
+ecoregions = []
+scrub = "lib/g8/shrb_tmp_wet.for"
+[[biome.band]]
+name = "low"
+elev_max = 1500
+dense = "lib/vegetation/forests/mixed/temperate.for"
+sparse = "lib/g8/mixed_sp_tmp_wet.for"
+[[biome.band]]
+name = "high"
+elev_max = 9000
+dense = "lib/vegetation/forests/conifers/cold.for"
+sparse = "lib/vegetation/forests/conifers/cold_low.for"
+
+# --- evergreen_swap (template only; not copied into a region's rules) ---
+# Regions with evergreen_only = true (e.g. the tropics, where XP12's season maps can put
+# highlands in "winter") get these evergreen types instead of the seasonal ones above.
+[evergreen_swap]
+"lib/vegetation/forests/mixed/temperate.for" = "lib/vegetation/forests/mixed/very_hot.for"
+"lib/vegetation/forests/broadleaves/temperate.for" = "lib/vegetation/forests/mixed/very_hot.for"
+"lib/vegetation/forests/mixed/cold.for" = "lib/vegetation/forests/mixed/very_hot.for"
+"lib/vegetation/forests/mixed/cold_low.for" = "lib/g8/coni_sp_vhot_wet.for"
+"lib/vegetation/forests/conifers/temperate.for" = "lib/g8/coni_vhot_wet.for"
+"lib/vegetation/forests/conifers/cold.for" = "lib/g8/coni_sp_vhot_wet.for"
+"lib/vegetation/forests/conifers/cold_low.for" = "lib/g8/sparse_tr_vhot_dry.for"
+"lib/vegetation/forests/broadleaves/warm_dry.for" = "lib/vegetation/forests/broadleaves/hot_dry.for"
+"lib/vegetation/forests/mixed/warm_dry.for" = "lib/vegetation/forests/mixed/hot_dry.for"
+"lib/vegetation/forests/conifers/warm_dry.for" = "lib/vegetation/forests/conifers/hot_dry.for"
+"lib/g8/broad_sp_tmp_wet.for" = "lib/g8/broad_sp_vhot_wet.for"
+"lib/g8/broad_sp_tmp_dry.for" = "lib/g8/broad_sp_hot_sdry.for"
+"lib/g8/mixed_sp_tmp_wet.for" = "lib/g8/mixed_sp_vhot_wet.for"
+"lib/g8/mixed_sp_wrm_sdry.for" = "lib/g8/mixed_sp_hot_sdry.for"
+"lib/g8/coni_sp_tmp_wet.for" = "lib/g8/coni_sp_vhot_wet.for"
+"lib/g8/coni_sp_tmp_dry.for" = "lib/g8/coni_sp_hot_sdry.for"
+"lib/g8/coni_sp_wrm_sdry.for" = "lib/g8/coni_sp_hot_sdry.for"
+"lib/g8/shrb_tmp_wet.for" = "lib/g8/shrb_vhot_wet.for"
+"lib/g8/shrb_tmp_dry.for" = "lib/g8/shrb_hot_dry.for"
+"lib/g8/shrb_wrm_sdry.for" = "lib/g8/shrb_hot_sdry.for"
+"lib/g8/orch_tmp_wet.for" = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"

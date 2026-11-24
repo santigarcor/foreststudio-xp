@@ -115,7 +115,7 @@
       </div>
       <p class="hint">Forest type = <b>biome</b> (where it is) × <b>elevation band</b> × <b>dense</b> or
         <b>sparse</b> (tree density).
-        Only evergreen X-Plane forests are offered (no winter look in the Andes).</p>
+        <span id="seasonNote">Only evergreen X-Plane forests are offered (no winter look in tropical highlands).</span></p>
       <p class="hint fpskey">FPS cost of each type = trees per km² × triangles per tree:
         <span class="fps fps-high">⚡⚡ heavy</span> ≥ 7 M triangles/km² ·
         <span class="fps fps-medium">⚡ medium</span> 3–7 M · <span class="fps fps-low">light</span> &lt; 3 M.
@@ -166,6 +166,7 @@
     <div class="row between"><h2>Data</h2><button id="dataRefresh" class="ghost">Refresh</button></div>
     <p class="hint">The maps ForestStudio builds forests from. Everything is downloaded automatically when you
       build a tile; here you can see what you have, download data ahead of time, and get newer OpenStreetMap data.</p>
+    <div class="info" id="dataRegions"></div>
     <div class="datacards">
       <div class="info datacard" id="dcOsm"></div>
       <div class="info datacard" id="dcEco"></div>

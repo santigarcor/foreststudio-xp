@@ -467,11 +467,15 @@ function renderBiomeHead(bm) {
   for (const e of S.ecoregions) if (!assigned.has(e)) add.append(el("option", { value: e }, e));
   add.disabled = bm.name === "default";
   add.onchange = () => { if (add.value) { (bm.ecoregions ||= []).push(add.value); renderRules(); } };
+  const resolve = (bm.resolve_biomes || []).length
+    ? el("div", { class: "hint" }, "Also every ecoregion of these world biomes (RESOLVE) not listed by name: "
+      + bm.resolve_biomes.join(" · "))
+    : "";
   box.append(el("div", { class: "top" }, color, label),
     el("div", { class: "lab" }, bm.name === "default"
-      ? "Used for every ecoregion not listed in another biome."
+      ? "Used for every ecoregion no other biome covers."
       : `Ecoregions in this biome (${(bm.ecoregions || []).length}) — click one to remove it`),
-    ecoBox, add);
+    ecoBox, add, resolve);
 }
 
 function renderPlantations() {
@@ -508,6 +512,9 @@ function renderRules() {
   curBiome = Math.min(curBiome, rules.biome.length - 1);
   const bm = rules.biome[curBiome];
   renderBiomePicker(); renderBiomeHead(bm);
+  $("#seasonNote").textContent = regionInfo().evergreen_only === false
+    ? "This region allows seasonal X-Plane forests (bare in winter, as real temperate forests are)."
+    : "Only evergreen X-Plane forests are offered (no winter look in tropical highlands).";
   $("#sparseBelow").value = rules.sparse_below; $("#sbOut").textContent = rules.sparse_below;
   $("#sparseBelow").oninput = () => { rules.sparse_below = +$("#sparseBelow").value; $("#sbOut").textContent = rules.sparse_below; };
   const sb = $("#singleBox"); sb.innerHTML = "";

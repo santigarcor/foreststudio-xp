@@ -176,15 +176,25 @@ def rule_biomes(rules: dict) -> list[dict]:
 
 
 def biome_raster(tile: Tile, grid: Grid, biomes: list[dict], region: str) -> np.ndarray:
-    """Index into `biomes` per grid cell (unmapped ecoregions → default, the last)."""
-    from forest.fetch.ecoregions import ecoregion_raster
+    """Index into `biomes` per grid cell. A biome listing the ecoregion by name wins; otherwise the
+    first biome whose `resolve_biomes` holds the ecoregion's RESOLVE biome; else default (the last)."""
+    from forest.fetch.ecoregions import ecoregion_biome_names, ecoregion_raster
 
     eco, names = ecoregion_raster(tile, grid, region)
     by_name = {e: i for i, b in enumerate(biomes) for e in b.get("ecoregions", [])}
+    by_resolve: dict[str, int] = {}
+    for i, b in enumerate(biomes):
+        for rb in b.get("resolve_biomes", []):
+            by_resolve.setdefault(rb, i)
+    resolve_of = ecoregion_biome_names(region) if by_resolve else {}
     lut = np.full(int(eco.max()) + 1 if eco.size else 1, len(biomes) - 1, dtype=np.uint8)
     for eco_id, name in names.items():
-        if name in by_name and eco_id < lut.size:
+        if eco_id >= lut.size:
+            continue
+        if name in by_name:
             lut[eco_id] = by_name[name]
+        elif resolve_of.get(name) in by_resolve:
+            lut[eco_id] = by_resolve[resolve_of[name]]
     return lut[eco]
 
 

@@ -9,8 +9,12 @@ place, the wrong type, or missing. ForestStudio XP builds a forest overlay tile 
 10 m satellite land cover, tree-cover maps, OpenStreetMap and biome maps, using X-Plane's own
 default tree models. It's a desktop app: pick tiles on a map, press **Build**, fly.
 
-It currently covers **Colombia**. More regions may come later: each region is one small file
-in `config/regions/` (map area, OpenStreetMap download, whether seasonal trees are allowed).
+It ships with **Colombia** (hand-tuned forest types). Other countries or states can be added in
+**Data → Regions** from Geofabrik's list of OpenStreetMap downloads: a new region gets the 1° tiles
+its outline touches and default forest types for each world biome (rainforest, temperate,
+boreal, Mediterranean, desert…), which you can edit in Build → Forest types. Regions between the
+tropics use evergreen trees only; others use X-Plane's seasonal forests. Tiles on a border read
+every downloaded country file that covers them.
 
 ## What you get
 

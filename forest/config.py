@@ -73,6 +73,8 @@ def ensure_user_config() -> Path:
         dst = USER_CONFIG / sub
         dst.mkdir(parents=True, exist_ok=True)
         for f in sorted((DEFAULTS_DIR / sub).glob("*.toml")):
+            if f.name.startswith("_"):      # templates (rules/_global.toml), not settings
+                continue
             if not (dst / f.name).exists():
                 shutil.copy2(f, dst / f.name)
     return USER_CONFIG
@@ -83,7 +85,17 @@ def profile_path(name: str) -> Path:
 
 
 def rules_path(region: str) -> Path:
-    return ensure_user_config() / "rules" / f"{region}.toml"
+    """The region's forest types. A region without shipped rules (one added from Geofabrik)
+    gets a copy of the global defaults (rules/_global.toml) on first use."""
+    p = ensure_user_config() / "rules" / f"{region}.toml"
+    if not p.exists():
+        from forest import regions
+
+        try:
+            p.write_text(regions.template_rules_text(regions.get(region)), encoding="utf-8")
+        except ValueError:
+            pass   # not a known region: callers report the missing file
+    return p
 DSFTOOL_EXE = "DSFTool.exe" if sys.platform == "win32" else "DSFTool"
 
 

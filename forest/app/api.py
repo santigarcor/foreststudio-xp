@@ -325,11 +325,17 @@ class Api:
 
     def default_rules(self, region: str) -> dict:
         """The forest types shipped with ForestStudio for this region (for "Reset to defaults")."""
+        import tomllib
+
+        from forest import regions
         from forest.build import fill_rule_defaults
         path = config.DEFAULTS_DIR / "rules" / f"{region}.toml"
-        if not path.exists():
-            return {"ok": False, "error": f"No shipped forest types for '{region}'."}
-        return {"ok": True, "rules": fill_rule_defaults(st.read_toml(path), region)}
+        if path.exists():
+            return {"ok": True, "rules": fill_rule_defaults(st.read_toml(path), region)}
+        try:   # a region without hand-made rules: the global defaults by biome
+            return {"ok": True, "rules": tomllib.loads(regions.template_rules_text(regions.get(region)))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
     def save_rules(self, region: str, data: dict) -> dict:
         try:
@@ -440,7 +446,8 @@ class Api:
             return {"ok": False, "error": str(exc)}
         avg = history.averages()
         need_rasters = [t for t in ts if not (CACHE / t.name / "worldcover.tif").exists()]
-        need_osm = [t for t in ts if not is_current(t)]
+        from forest import regions
+        need_osm = [t for t in ts if not is_current(t, regions.osm_sources(t, region) or None)]
         from forest.paths import dsf_path
         new_out = [t for t in ts if not dsf_path(region, t).exists()]
         import math
@@ -514,6 +521,7 @@ class Api:
     # ---------- data (downloads without building) ----------
     def data_status(self, region: str = "colombia") -> dict:
         """Country-wide files and every tile's downloaded data (no network)."""
+        from forest import regions
         from forest.build import DATA_FILES
         from forest.fetch import sources
         from forest.fetch.ecoregions import clipped_path
@@ -523,7 +531,14 @@ class Api:
         osm = sources.status(sources.osm_file(region), sources.osm_url(region))
         eco = sources.status(sources.ecoregions_zip(), sources.ECOREGIONS_URL)
         eco["ready"] = clipped_path(region).exists()
-        osm_time = osm["downloaded"] if osm["exists"] else None
+
+        def _osm_stale(t, o_time):   # older than a file it comes from, or from other files
+            if not o_time:
+                return False
+            srcs = regions.osm_sources(t)
+            newest = max((sources.read_meta(p).get("downloaded") or 0 for p in srcs), default=0)
+            return o_time < newest or not is_current(t, srcs or None)
+
         tiles = []
         for d in sorted(CACHE.glob("*")) if CACHE.exists() else []:
             try:
@@ -538,7 +553,7 @@ class Api:
                 "tile": t.name, "mb": round(size / 1e6, 1),
                 "satellite": files["worldcover.tif"] and files["treecover2000.tif"] and files["lossyear.tif"],
                 "osm": files["osm.json"], "osm_date": o_time,
-                "osm_stale": bool(o_time and osm_time and o_time < osm_time) or (files["osm.json"] and not is_current(t)),
+                "osm_stale": _osm_stale(t, o_time),
                 "elevation": (d / "elevation_int16.npy").exists(),
                 "built": dsf_path(region, t).exists(),
             })
@@ -550,6 +565,70 @@ class Api:
             return {"ok": True, **sources.check_update(sources.osm_file(region), sources.osm_url(region))}
         except OSError as exc:
             return {"ok": False, "error": f"Couldn't reach Geofabrik: {exc}"}
+
+    # ---------- regions from Geofabrik's list ----------
+    def geofabrik_list(self) -> dict:
+        """Geofabrik's extracts as a tree (no network), with the regions already added."""
+        from forest import regions
+        from forest.fetch import geofabrik, osm_pbf, sources
+
+        if not geofabrik.has_index():
+            return {"ok": True, "has_index": False, "entries": []}
+        added = {}
+        for n in regions.names():
+            try:
+                r = regions.get(n)
+            except ValueError:
+                continue
+            added[r.osm_file.name] = {"region": n, "downloaded": r.osm_file.exists(),
+                                      "user": regions.is_user_region(n)}
+        out = []
+        for e in geofabrik.tree():
+            fn = e["pbf"].rsplit("/", 1)[-1]
+            meta = sources.read_meta(osm_pbf.PBF_DIR / fn) if fn in added else {}
+            out.append({**e, **({"added": added[fn], "size": meta.get("size")} if fn in added else {})})
+        return {"ok": True, "has_index": True, "entries": out,
+                "index_date": int(geofabrik.index_path().stat().st_mtime)}
+
+    def geofabrik_download_index(self) -> dict:
+        from forest.fetch import geofabrik
+        try:
+            geofabrik.download_index()
+        except OSError as exc:
+            return {"ok": False, "error": f"Couldn't download Geofabrik's list: {exc}"}
+        return self.geofabrik_list()
+
+    def geofabrik_sizes(self, ids: list[str]) -> dict:
+        """Download sizes (MB) of these extracts, asked from Geofabrik (HEAD requests)."""
+        from forest.fetch import geofabrik
+        es = geofabrik.entries()
+        urls = {i: es[i]["pbf"] for i in ids[:80] if i in es}
+        got = geofabrik.sizes(list(urls.values()))
+        return {"ok": True, "sizes": {i: (round(got[u] / 1e6) if got.get(u) else None) for i, u in urls.items()}}
+
+    def add_region(self, eid: str) -> dict:
+        from forest import regions
+        try:
+            r = regions.add_from_geofabrik(eid)
+            config.rules_path(r.name)          # forest types from the global defaults
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "region": r.name, "tiles": len(r.tiles()), **self._regions_state()}
+
+    def remove_region(self, name: str) -> dict:
+        from forest import regions
+        if self.job.running:
+            return {"ok": False, "error": "Wait until the running build or download finishes."}
+        try:
+            gone = regions.remove(name)
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "removed": gone, **self._regions_state()}
+
+    def _regions_state(self) -> dict:
+        from forest import regions
+        return {"regions": regions.names(), "default_region": regions.default_name(),
+                "region_info": {n: regions.get(n).info() for n in regions.names()}}
 
     def start_data_job(self, kind: str, tiles: list[str] | None = None, region: str = "colombia",
                        force: bool = False) -> dict:

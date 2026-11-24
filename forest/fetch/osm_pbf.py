@@ -1,7 +1,9 @@
 """Read OSM features for one or many tiles from a local Geofabrik .osm.pbf extract.
 
 One pass over the file serves any number of tiles: every element is streamed into each
-requested tile it touches, so memory stays low even for a whole country.
+requested tile it touches, so memory stays low even for a whole country. A tile on a border is
+filled from every downloaded extract that covers it (one pass per file, elements found in two
+files are written once); the files used are listed in the header ("sources").
 
 Writes cache/tiles/<tile>/osm.json in the same shape as Overpass `out geom`:
 - nodes:     {"type": "node", "id", "tags", "lat", "lon"}            (natural=tree)
@@ -83,17 +85,30 @@ def wanted_area_relation(t) -> bool:
 
 
 class _TileWriter:
-    """Streams elements into one tile's osm.json (written to .part, renamed on close)."""
+    """Streams elements into one tile's osm.json (written to .part, renamed on close).
+    With several source files, elements already written (same type and id) are skipped."""
 
-    def __init__(self, tile: Tile):
+    _TYPE = {"node": 0, "way": 1, "relation": 2}
+
+    def __init__(self, tile: Tile, sources: list[str] | None = None):
         self.out = tile.cache / "osm.json"
         self.part = self.out.with_suffix(".part")
         self.fh = self.part.open("w", encoding="utf-8")
-        self.fh.write(f'{{"version": {VERSION}, "elements": [\n')
+        if sources and len(sources) > 1:
+            self.fh.write(f'{{"version": {VERSION}, "sources": {json.dumps(sources)}, "elements": [\n')
+            self.seen: set[int] | None = set()
+        else:   # one file: the same header as before multi-file tiles existed
+            self.fh.write(f'{{"version": {VERSION}, "elements": [\n')
+            self.seen = None
         self.first = True
         self.count = 0
 
     def add(self, el: dict) -> None:
+        if self.seen is not None:
+            key = el["id"] * 3 + self._TYPE[el["type"]]
+            if key in self.seen:
+                return
+            self.seen.add(key)
         if not self.first:
             self.fh.write(",\n")
         self.first = False
@@ -163,38 +178,71 @@ class _Handler(osmium.SimpleHandler):
             w.add(el)
 
 
-def is_current(tile: Tile) -> bool:
+def header_sources(tile: Tile) -> list[str] | None:
+    """The extract files named in the tile's osm.json header (None: one file, the older header)."""
+    out = tile.cache_path / "osm.json"
+    with out.open("r", encoding="utf-8") as fh:
+        head = fh.read(4096)
+    m = re.search(r'"sources": (\[[^\]]*\])', head.split('"elements"', 1)[0])
+    return json.loads(m.group(1)) if m else None
+
+
+def is_current(tile: Tile, sources: list[Path] | None = None) -> bool:
+    """osm.json exists, has the current format and (when `sources` is given) was read from
+    exactly these extract files."""
     out = tile.cache_path / "osm.json"
     if not out.exists():
         return False
     with out.open("r", encoding="utf-8") as fh:
         head = fh.read(64)
-    return f'"version": {VERSION}' in head
+    if f'"version": {VERSION}' not in head:
+        return False
+    if sources is None:
+        return True
+    have = header_sources(tile)
+    want = sorted(p.name for p in sources)
+    return (have is None and len(want) <= 1) or have == want
 
 
-def extract_tiles(tiles: list[Tile], pbf: Path, force: bool = False) -> dict[str, int]:
-    """One pass over the .pbf for all tiles that need it. Returns element counts per tile."""
-    todo = [t for t in tiles if force or not is_current(t)]
+def _sources_of(tile: Tile, pbf, region: str | None) -> list[Path]:
+    if pbf is None:
+        from forest import regions
+        return regions.osm_sources(tile, region)
+    return sorted(pbf, key=lambda p: p.name) if isinstance(pbf, (list, tuple)) else [pbf]
+
+
+def extract_tiles(tiles: list[Tile], pbf: Path | list[Path] | None = None,
+                  force: bool = False, region: str | None = None) -> dict[str, int]:
+    """Write osm.json for every tile that needs it. `pbf`: the extract file(s) to read; None =
+    every downloaded extract covering each tile (regions.osm_sources; `region`'s own file is
+    always included when downloaded). One pass per file serves
+    all tiles that use it. Returns element counts per tile."""
+    plan = {t.name: (t, _sources_of(t, pbf, region)) for t in tiles}
+    todo = {n: (t, src) for n, (t, src) in plan.items() if src and (force or not is_current(t, src))}
     if not todo:
         return {}
-    if not pbf.exists():
-        raise FileNotFoundError(f"OSM extract not found: {pbf}")
-    writers = {(t.lat, t.lon): _TileWriter(t) for t in todo}
+    files = sorted({p for _, src in todo.values() for p in src}, key=lambda p: p.name)
+    for f in files:
+        if not f.exists():
+            raise FileNotFoundError(f"OSM extract not found: {f}")
+    writers = {(t.lat, t.lon): _TileWriter(t, [p.name for p in src]) for t, src in todo.values()}
     try:
-        _Handler(writers).apply_file(str(pbf), locations=True, idx="flex_mem")
+        for f in files:
+            use = {(t.lat, t.lon): writers[(t.lat, t.lon)] for t, src in todo.values() if f in src}
+            _Handler(use).apply_file(str(f), locations=True, idx="flex_mem")
     except BaseException:
         for w in writers.values():
             w.fh.close()
             w.part.unlink(missing_ok=True)
         raise
     counts = {}
-    for t in todo:
+    for t, _ in todo.values():
         w = writers[(t.lat, t.lon)]
         w.close()
         counts[t.name] = w.count
     return counts
 
 
-def extract_tile(tile: Tile, pbf: Path) -> Path:
+def extract_tile(tile: Tile, pbf: Path | list[Path] | None = None) -> Path:
     extract_tiles([tile], pbf)
     return tile.cache / "osm.json"

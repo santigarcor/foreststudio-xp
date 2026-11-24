@@ -97,13 +97,13 @@ def _fetch_bbox(s: float, w: float, n: float, e: float, out: Path, retries: int 
 
 
 def fetch_osm(tile: Tile, region: str) -> Path:
-    """Use the region's local Geofabrik extract when present (preferred), else Overpass."""
+    """Use the local Geofabrik extracts covering the tile when present (preferred), else Overpass."""
     from forest import regions
     from forest.fetch.osm_pbf import extract_tile
 
-    pbf = regions.get(region).osm_file
-    if pbf.exists():
-        return extract_tile(tile, pbf)
+    pbfs = regions.osm_sources(tile, region)   # every downloaded extract covering the tile
+    if pbfs:
+        return extract_tile(tile, pbfs)
     return fetch_overpass(tile)
 
 
