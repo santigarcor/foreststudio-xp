@@ -229,6 +229,8 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
         resolve = [str(e) for e in bm.get("resolve_biomes", []) if str(e).strip()]
         if resolve:   # only when used, so older rules files (Colombia) keep their fingerprint
             entry["resolve_biomes"] = resolve
+        if "climate" in bm:   # likewise (absent = off, or the template's value for added regions)
+            entry["climate"] = bool(bm["climate"])
         biomes.append(entry)
     if "default" not in seen:
         raise ValueError('a biome named "default" is required (used for unlisted ecoregions)')
@@ -289,7 +291,8 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
         f"# Town trees where a biome sets no town_tree{must}.",
         f"town_tree = {_q(d['town_tree'])}",
         "",
-        "# Per biome: scrub = bush type (\"\" = none), scrub_on_bare = also on bare land,",
+        "# Per biome: climate = pick X-Plane's forest by satellite leaf type and climate map",
+        "# (elevation bands then only a fallback), scrub = bush type (\"\" = none), scrub_on_bare = also on bare land,",
         "# town_tree = town tree type (\"\" = the one above).",
         "",
         "# Plantations from OpenStreetMap: first matching rule wins; match = key=value, & joins",
@@ -306,6 +309,7 @@ def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:
                   "ecoregions = [" + ", ".join(_q(e) for e in bm["ecoregions"]) + "]",
                   *(["resolve_biomes = [" + ", ".join(_q(e) for e in bm["resolve_biomes"]) + "]"]
                     if bm.get("resolve_biomes") else []),
+                  *([f"climate = {_num(bm['climate'])}"] if "climate" in bm else []),
                   f"scrub = {_q(bm['scrub'])}", f"scrub_on_bare = {_num(bm['scrub_on_bare'])}",
                   f"town_tree = {_q(bm['town_tree'])}"]
         for b in bm["band"]:

@@ -34,6 +34,7 @@ from forest import config
 from forest.assets.catalog import load_catalog
 from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile, signed_area
 from forest.exclusions import coverage_mask, exclusion_mask, load_osm, osm_geometries, osm_tree_hints
+from forest.fetch import climate as clim
 from forest.fetch.elevation import elevation_on_grid
 from forest.fetch.osm import fetch_osm
 from forest.fetch.rasters import (
@@ -47,6 +48,7 @@ from forest.fetch.rasters import (
     fetch_all,
     read_on_grid,
 )
+from forest.fetch.sources import print_progress
 from forest.tiles import Grid, Tile
 
 
@@ -92,6 +94,11 @@ def fill_rule_defaults(rules: dict, region: str) -> dict:
     path = config.DEFAULTS_DIR / "rules" / f"{region}.toml"
     shipped = _toml(path) if path.exists() else {}
     by_name = {b["name"]: b for b in shipped.get("biome", [])}
+    # Regions made from the global template (no shipped rules of their own) pick trees by leaf
+    # type and climate unless their file says otherwise (rules written before that existed).
+    tpl = config.DEFAULTS_DIR / "rules" / "_global.toml"
+    template = {} if path.exists() or not tpl.exists() else {
+        b["name"]: b for b in _toml(tpl).get("biome", [])}
     out = dict(rules)
     out.setdefault("town_tree", shipped.get("town_tree") or rules.get("single_tree", ""))
     biomes = []
@@ -101,6 +108,8 @@ def fill_rule_defaults(rules: dict, region: str) -> dict:
         b.setdefault("scrub", ref.get("scrub", ""))
         b.setdefault("scrub_on_bare", bool(ref.get("scrub_on_bare", False)))
         b.setdefault("town_tree", ref.get("town_tree", ""))
+        if "climate" not in b and template.get(b.get("name"), {}).get("climate"):
+            b["climate"] = True
         biomes.append(b)
     if biomes:
         out["biome"] = biomes
@@ -198,6 +207,34 @@ def biome_raster(tile: Tile, grid: Grid, biomes: list[dict], region: str) -> np.
     return lut[eco]
 
 
+def climate_types(tile: Tile, grid: Grid, s: Settings, t0: float) -> np.ndarray | None:
+    """Per cell: leaf family * 24 + temperature * 4 + moisture (see forest.fetch.climate), for
+    biomes with `climate = true`. None (→ their elevation bands) if the climate map is missing."""
+    from forest import regions
+    try:
+        clim.ensure_climate(print_progress("climate") if not clim.climate_path().exists() else None)
+    except OSError as exc:
+        _log(f"climate map download FAILED ({exc}); using the biomes' elevation bands", t0)
+        return None
+    try:
+        clim.fetch_leaftype(tile)
+    except Exception as exc:  # noqa: BLE001 - without it every forest is "mixed"
+        _log(f"leaf-type map FAILED ({exc}); all forest counted as mixed", t0)
+    tm = clim.climate_on_grid(tile, grid)
+    if tm is None:
+        return None
+    temp, moist = tm
+    if regions.get(s.region).evergreen_only:
+        temp[:] = clim.TEMPS.index("vhot")   # rule 3: only X-Plane's evergreen (very hot) family
+    fam = clim.leaf_on_grid(tile, grid)
+    code = fam.astype(np.uint8) * 24 + temp * 4 + moist
+    shares = np.bincount(fam.ravel(), minlength=3) / fam.size
+    _log("leaf type: " + ", ".join(f"{n} {100 * v:.0f}%" for n, v in zip(("conifers", "broadleaves", "mixed"), shares))
+         + "; climate: " + ", ".join(sorted({f"{clim.TEMPS[t]}_{clim.MOISTS[m]}"
+                                             for t, m in set(zip(temp.ravel()[::997].tolist(), moist.ravel()[::997].tolist()))})), t0)
+    return code
+
+
 def classify(tile: Tile, s: Settings, t0: float) -> dict:
     p = s.profile
     grid = Grid(tile, p["grid_cells"])
@@ -292,9 +329,25 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                     assets.append(b[k])
     sparse = density < s.rules["sparse_below"]
     asset_idx = np.zeros(grid.shape, dtype=np.int16)
+    climate = climate_types(tile, grid, s, t0) if any(b.get("climate") for b in biomes) else None
     for bi, bm in enumerate(biomes):
         in_biome = biome_idx == bi
         if not in_biome.any():
+            continue
+        if bm.get("climate") and climate is not None:
+            # Leaf type × climate → X-Plane's own forest for it (lib/g8/<family>_<temp>_<moist>).
+            combo = climate[in_biome]
+            sp = sparse[in_biome]
+            idx = np.zeros(combo.shape, dtype=np.int16)
+            for code in np.unique(combo):
+                f, t, m = int(code) // 24, (int(code) // 4) % 6, int(code) % 4
+                for is_sp in (False, True):
+                    name = clim.asset_name(f, clim.TEMPS[t], clim.MOISTS[m], is_sp)
+                    if name not in assets:
+                        assets.append(name)
+                    idx[(combo == code) & (sp == is_sp)] = assets.index(name)
+            asset_idx[in_biome] = idx
+            del combo, sp, idx
             continue
         bands = bm["band"]
         band_idx = np.digitize(elev, [b["elev_max"] for b in bands[:-1]])
@@ -353,6 +406,17 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
             for bi, bm in enumerate(biomes):
                 sel = scrub & (biome_idx == bi)
                 if not sel.any():
+                    continue
+                if bm.get("climate") and climate is not None:
+                    # Bushes for the local climate too (X-Plane's lib/g8/shrb_<temp>_<moisture>).
+                    tm = climate[sel] % 24
+                    idx = np.zeros(tm.shape, dtype=np.int16)
+                    for code in np.unique(tm):
+                        name = f"lib/g8/shrb_{clim.TEMPS[int(code) // 4]}_{clim.MOISTS[int(code) % 4]}.for"
+                        if name not in assets:
+                            assets.append(name)
+                        idx[tm == code] = assets.index(name)
+                    asset_idx[sel] = idx
                     continue
                 if bm["scrub"] not in assets:
                     assets.append(bm["scrub"])
@@ -764,7 +828,7 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 # built before shows up as outdated.
 BUILD_VERSION = 4  # 2: scrub and town trees; 3: none of them inside airport grounds;
 # 4: OSM mangroves, mangrove thickness from WorldCover only
-DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json")
+DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json", clim.LEAF_FILE)
 
 
 def settings_fingerprint(s: Settings) -> str:

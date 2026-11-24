@@ -30,6 +30,17 @@ DATA = [
      "attribution": "Dinerstein, E. et al. 2017. An Ecoregion-Based Approach to Protecting Half the "
                     "Terrestrial Realm. BioScience 67(6): 534–545",
      "url": "https://ecoregions.appspot.com"},
+    {"name": "Copernicus Global Land Service: Land Cover 100 m, collection 3, 2019 (forest type)",
+     "use": "leaf type of each forest (conifers / broadleaves / mixed)",
+     "license": "free and open (Copernicus data policy)",
+     "attribution": "Buchhorn, M. et al. Copernicus Global Land Service: Land Cover 100m: collection 3: "
+                    "epoch 2019: Globe (V3.0.1). Zenodo, doi:10.5281/zenodo.3939050",
+     "url": "https://zenodo.org/records/3939050"},
+    {"name": "Köppen-Geiger climate classification 1 km, 1991–2020", "use": "climate of each forest (picks the tree types)",
+     "license": "Creative Commons Attribution 4.0 (CC BY 4.0)",
+     "attribution": "Beck, H. E. et al. 2023. High-resolution (1 km) Köppen-Geiger maps for 1901–2099 "
+                    "based on constrained CMIP6 projections. Scientific Data 10: 724",
+     "url": "https://doi.org/10.6084/m9.figshare.21789074"},
     {"name": "X-Plane 12 base mesh", "use": "elevation (read from your own X-Plane install, not redistributed)",
      "license": "Laminar Research", "attribution": "Laminar Research", "url": "https://www.x-plane.com"},
 ]

@@ -31,7 +31,8 @@ _COUNTRY_DL_RE = re.compile(r"OSM country file(?: missing)?: downloading (?P<url
 _READING_RE = re.compile(r"reading OpenStreetMap: (?P<file>\S+) \((?P<mb>\d+) MB\) for (?P<n>\d+) tile")
 _SAT_START_RE = re.compile(r"satellite maps: downloading for (?P<n>\d+) tile")
 _SAT_READY_RE = re.compile(r"[+-]\d{2}[+-]\d{3}: (rasters ready|data download FAILED)")
-_DL_DEFAULT = {"OSM": "the OpenStreetMap file", "ecoregions": "the biome map (Ecoregions 2017)"}
+_DL_DEFAULT = {"OSM": "the OpenStreetMap file", "ecoregions": "the biome map (Ecoregions 2017)",
+               "climate": "the climate map (Köppen-Geiger)"}
 _DOWNLOAD_RE = re.compile(r"download (?P<what>\w+): (?P<mb>\d+) MB(?: (?P<pct>\d+)%)?\s*$")
 
 
@@ -568,6 +569,8 @@ class Api:
             osm[n] = {**sources.status(r.osm_file, r.osm_url), "file": r.osm_file.name,
                       "cutout": clipped_path(n).exists()}
         eco = sources.status(sources.ecoregions_zip(), sources.ECOREGIONS_URL)
+        from forest.fetch import climate
+        clim = sources.status(climate.climate_path(), climate.KOPPEN_URL)
 
         def _osm_stale(t, o_time):   # older than a file it comes from, or from other files
             if not o_time:
@@ -589,12 +592,13 @@ class Api:
             tiles.append({
                 "tile": t.name, "mb": round(size / 1e6, 1),
                 "satellite": files["worldcover.tif"] and files["treecover2000.tif"] and files["lossyear.tif"],
+                "leaftype": files["leaftype.tif"],
                 "osm": files["osm.json"], "osm_date": o_time,
                 "osm_stale": _osm_stale(t, o_time),
                 "elevation": (d / "elevation_int16.npy").exists(),
                 "built": dsf_path(t).exists(),
             })
-        return {"osm": osm, "ecoregions": eco, "tiles": tiles, "busy": self.job.running}
+        return {"osm": osm, "ecoregions": eco, "climate": clim, "tiles": tiles, "busy": self.job.running}
 
     def check_osm_update(self, region: str = "colombia") -> dict:
         from forest.fetch import sources
@@ -821,6 +825,9 @@ class Api:
         elif text.startswith("ecoregions map missing: downloading"):
             j.dl_name = _DL_DEFAULT["ecoregions"]
             self._set_phase(f"Downloading {j.dl_name}…", note=True)
+        elif text.startswith("climate map missing: downloading"):
+            j.dl_name = _DL_DEFAULT["climate"]
+            self._set_phase(f"Downloading {j.dl_name}…", note=True)
         elif m := _SAT_START_RE.match(text):
             j.sat = [0, int(m["n"])]
             self._set_phase(f"Getting satellite maps for {m['n']} tile(s)…")
@@ -831,7 +838,7 @@ class Api:
             j.progress = None
             self._set_phase(f"Reading OpenStreetMap ({m['file']}, {m['mb']} MB) for {m['n']} tile(s) — "
                             "this can take a few minutes", note=True)
-        elif text.startswith(("OSM:", "ecoregions: ready")):
+        elif text.startswith(("OSM:", "ecoregions: ready", "climate map: ready")):
             j.progress = None
             self._set_phase(None)
 

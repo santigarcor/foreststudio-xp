@@ -138,6 +138,8 @@ forest/
     osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
     elevation.py   elevation from X-Plane's own base mesh via DSFTool (no download)
     ecoregions.py  RESOLVE Ecoregions 2017 → cache/ecoregions/<region>.geojson → per-tile raster
+    climate.py     leaf type (Copernicus LC100 forest-type window → tile leaftype.tif) × Köppen climate
+                   (cache/climate/koppen_geiger_1991_2020.tif) → lib/g8/<family>[_sp]_<temp>_<moist>.for
   exclusions.py    OSM cut-outs (roads, buildings, water, runways, rail/power) + tree hints
                    (single trees, tree rows, parks/golf/woods, plantations)
   build.py         classify → vectorize → OSM trees → budget → DSF text (+ overlay/preview/stats)
@@ -182,6 +184,15 @@ tests/                              pytest suite (sandboxed)
      misses Caribbean mangroves), gaussian blur, quantised to `density_levels`;
    - **biome** per cell from ecoregions; mangrove cells override to the `mangrove`
      biome; asset = that biome's elevation band × dense/sparse (`sparse_below`);
+   - **climate biomes** (`climate = true`, every biome of the global template except mangrove; not
+     Colombia): asset = X-Plane's `lib/g8/{coni,broad,mixed}[_sp]_<temp>_<moist>.for` from the leaf
+     type (Copernicus forest type, 500 m majority: ≥ 60 % conifer → coni, ≥ 60 % broadleaf → broad,
+     else/unknown → mixed; broadleaf in Af → `rainforest_vhot_rain`) × the Köppen class
+     (`climate.KOPPEN`: e.g. Cfa → wrm/wet, Cfb → tmp/wet, Af → vhot/rain); sea cells take the nearest
+     climate; evergreen-only regions always use `vhot` (rule 3); their scrub becomes
+     `shrb_<temp>_<moist>` (the biome's scrub type only says whether there is any); elevation bands
+     are the fallback when the climate map is missing. These are the same files simHeaven X-World uses
+     (`1200 forests/<season>/coni_wrm.for` …);
    - **plantations** (OSM orchards/plantations/farmland/needleleaved forests) replace the biome
      asset inside their outline and are planted regardless of satellite tree share; rules with
      `asset = ""` clear trees (sugar cane, pineapple, rice…). First matching rule wins.
@@ -326,6 +337,8 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 | Tree cover / loss | Hansen GFC v1.12 (Google Storage, 10° tiles, strip-organised) | rows of the tile fetched |
 | OSM | Geofabrik `colombia-latest.osm.pbf` (~335 MB) in `<data>/cache/osm/` | ODbL; Overpass fallback timed out on whole tiles |
 | Biomes | RESOLVE Ecoregions 2017 (`storage.googleapis.com/teow2016/Ecoregions2017.zip`, 149 MB, CC-BY 4.0) | clipped to `<data>/cache/ecoregions/colombia.geojson` |
+| Leaf type | Copernicus Global Land Cover 100 m 2019, forest-type layer (Zenodo 3939050, one 1 GB COG-like GeoTIFF, 256² blocks) | 1° window per tile ≈ 0.1–1 MB, ~6 s; only for climate biomes |
+| Climate | Köppen-Geiger 1 km 1991–2020 (Beck et al. 2023, figshare 21789074, CC-BY 4.0) | 131 MB zip once → only the 12 MB present-day map kept |
 | Elevation | X-Plane 12 base mesh (`Global Scenery/…/+06-076.dsf`) via DSFTool | rows south→north in the raw raster |
 | Rejected | Meta/WRI 1 m canopy height (≈160 GB for Colombia, no overviews); ETH 10 m canopy (server rate-limited; parked) | tree height is parked |
 
@@ -385,6 +398,8 @@ keeps its old box so tiles stay identical), `osm_url` (Geofabrik `.osm.pbf`), `e
   Biome per cell: ecoregion listed by name → first biome whose `resolve_biomes` holds the
   ecoregion's RESOLVE biome (RESOLVE "Mangroves" polygons → tropical_moist, they reach inland) →
   `default`. `resolve_biomes` is written only when non-empty (Colombia's rules/fingerprint unchanged).
+  Template biomes carry `climate = true`; regions without shipped rules whose file predates it get it
+  from the template by biome name (`build.fill_rule_defaults`); `climate` is written only when present.
 - **Border tiles**: `regions.osm_sources(tile, region)` = every downloaded extract whose Geofabrik
   outline (or, without the index, region tiles) covers the tile, plus the building region's own.
   `extract_tiles` makes one pass per file into shared writers, dedupes by (type, id) when there are
@@ -428,7 +443,7 @@ global_density, density_blur_cells, simplify_m, chunks_per_degree, density_level
 scrub_density (0 = off), scrub_min_frac, town_trees_per_km2 (0 = off), town_min_built.
 Keys added later have defaults in `build.PROFILE_DEFAULTS` (older profile files still build/load).
 Schema, ranges, help texts and FPS marks: `forest/app/settings.py` (`PROFILE_SCHEMA`, `FPS_IMPACT`).
-Shipped medium: `tile_tree_budget` 30M, `global_density` 0.75 (owner's FPS check 2026-11-23,
+Shipped medium: `tile_tree_budget` 30M, `global_density` 0.8 (2026-11-24, was 0.75; owner's FPS check 2026-11-23,
 frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner uses).
 
 ---

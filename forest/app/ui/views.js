@@ -229,6 +229,15 @@ async function refreshData() {
     dl.onclick = () => busy(dl, "Starting…", () => startDataJob("ecoregions"));
     ec.append(el("div", { class: "row" }, dl));
   }
+  // Climate map (Köppen-Geiger): one download, used by biomes that pick trees by leaf type and climate
+  if (d.climate) {
+    const c = d.climate;
+    ec.append(el("h3", {}, "Climate map"));
+    ec.append(el("p", { class: "hint" }, "Köppen-Geiger 1 km: with the satellite leaf type (conifers / broadleaves / mixed, "
+      + "about 1 MB per tile) it picks X-Plane's tree types in biomes set to \"Pick trees by leaf type and climate\"."));
+    ec.append(c.exists ? el("div", {}, `${fmtMB(c.mb)} · downloaded ${fmtDay(c.downloaded)}`)
+      : el("div", { class: "hint" }, "Not downloaded yet (131 MB once). It's downloaded automatically on the first build that needs it."));
+  }
   // Tiles table
   const names = new Set(d.tiles.map(t => t.tile));
   dataChecked = new Set([...dataChecked].filter(n => names.has(n)));
@@ -286,7 +295,7 @@ function useRegion(name) {
 }
 
 /* What a running download job is doing for a region, e.g. "Downloading the OpenStreetMap file… 45 %". */
-const DL_WHAT = { OSM: "the OpenStreetMap file", ecoregions: "the biome map" };
+const DL_WHAT = { OSM: "the OpenStreetMap file", ecoregions: "the biome map", climate: "the climate map" };
 function regionProgress(j) {
   const p = j.progress;
   if (j.phase) return { text: j.phase, pct: p && p.pct != null && /^Download/.test(j.phase) ? p.pct : null };

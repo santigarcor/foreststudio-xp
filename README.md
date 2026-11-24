@@ -11,8 +11,10 @@ default tree models. It's a desktop app: pick tiles on a map, press **Build**, f
 
 It ships with **Colombia** (hand-tuned forest types). Other countries or states can be added in
 **Data → Regions** from Geofabrik's list of OpenStreetMap downloads: a new region gets the 1° tiles
-its outline touches and default forest types for each world biome (rainforest, temperate,
-boreal, Mediterranean, desert…), which you can edit in Build → Forest types. Regions between the
+its outline touches and default forest types that pick, for each spot, X-Plane's own forest for
+the leaf type seen by satellite (conifers, broadleaves or mixed) and the local climate (very cold …
+very hot, dry … rainforest). You can edit them in Build → Forest types. This needs a 131 MB climate map
+(downloaded once) and about 1 MB more per tile. Regions between the
 tropics use evergreen trees only; others use X-Plane's seasonal forests. Tiles on a border read
 every downloaded country file that covers them.
 
@@ -133,6 +135,8 @@ notices, as their licenses require. If you share tiles you built, keep that file
 | [ESA WorldCover 2021 v200](https://esa-worldcover.org) | land cover at 10 m (trees, mangroves) | © ESA WorldCover project 2021 / contains modified Copernicus Sentinel data (2021) processed by the ESA WorldCover consortium, CC BY 4.0 |
 | [Hansen Global Forest Change v1.12](https://glad.earthengine.app/view/global-forest-change) | tree cover share, recent forest loss | Hansen et al. 2013, *Science* 342: 850–853, CC BY 4.0 |
 | [RESOLVE Ecoregions 2017](https://ecoregions.appspot.com) | biomes (which forest type grows where) | Dinerstein et al. 2017, *BioScience* 67(6): 534–545, CC BY 4.0 |
+| [Copernicus Global Land Cover 100 m (2019)](https://zenodo.org/records/3939050) | leaf type of each forest (conifers / broadleaves / mixed) | Buchhorn et al., Copernicus Global Land Service, free and open |
+| [Köppen-Geiger 1 km maps](https://doi.org/10.6084/m9.figshare.21789074) | climate of each forest (picks the tree types) | Beck et al. 2023, *Scientific Data* 10: 724, CC BY 4.0 |
 | X-Plane 12 base mesh | elevation (read from your own X-Plane, not redistributed) | Laminar Research |
 
 Software included: **DSFTool** from Laminar Research's

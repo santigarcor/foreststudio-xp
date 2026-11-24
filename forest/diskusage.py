@@ -31,6 +31,9 @@ def _leftovers() -> list[Path]:
         out += [p for p in (CACHE / "tiles").glob("*/osm_parts") if p.is_dir()]
         out += list((CACHE / "tiles").glob("*/base_mesh.txt*"))
         out += list((CACHE / "tiles").glob("*/osm.part"))
+        out += list((CACHE / "tiles").glob("*/*.part.tif"))
+    if (CACHE / "climate").exists():
+        out += list((CACHE / "climate").glob("*.part")) + list((CACHE / "climate").glob("*.zip"))
     if OUT.exists():
         out += list(OUT.glob("studio/*.txt"))
         out += list(OUT.glob("studio/*.raw"))
@@ -52,7 +55,7 @@ def usage() -> dict:
     per_tile = []
     tile_bytes: dict[Path, int] = {}   # each tile folder is walked once
     for d in tile_dirs:
-        r = sum(size_bytes(d / n) for n in ("worldcover.tif", "treecover2000.tif", "lossyear.tif"))
+        r = sum(size_bytes(d / n) for n in ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "leaftype.tif"))
         o = size_bytes(d / "osm.json")
         e = size_bytes(d / "elevation_int16.npy")
         rasters, osm, elev = rasters + r, osm + o, elev + e
@@ -73,6 +76,8 @@ def usage() -> dict:
          "detail": "Geofabrik extract, read once per build job", "path": str(CACHE / "osm")},
         {"key": "ecoregions", "label": "Ecoregions map (biomes)", "mb": _mb(size_bytes(CACHE / "ecoregions")),
          "detail": "RESOLVE Ecoregions 2017 download + each region's cut-out", "path": str(CACHE / "ecoregions")},
+        {"key": "climate", "label": "Climate map", "mb": _mb(size_bytes(CACHE / "climate")),
+         "detail": "Köppen-Geiger 1 km (present day), picks tree types by climate", "path": str(CACHE / "climate")},
         {"key": "built", "label": "Built tiles (the X-Plane pack)", "mb": _mb(sum(size_bytes(p) for p in OUT.glob("forest_*"))),
          "detail": f"{len(list(OUT.glob('forest_*/Earth nav data/*/*.dsf')))} .dsf tiles; X-Plane sees them through a link (no copy)",
          "path": str(OUT)},

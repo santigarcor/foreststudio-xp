@@ -64,13 +64,23 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     tiles = _tiles(args)
     region = args.region   # None: every tile with its owner region's files
-    for r in sorted({region} if region else {regions.owner(t) or regions.default_name() for t in tiles}):
+    owner = {t.name: region or regions.owner(t) or regions.default_name() for t in tiles}
+    climate_regions = {r for r in set(owner.values()) if _uses_climate(r)}
+    for r in sorted(set(owner.values())):
         _ensure_country_files(r)
+    if climate_regions:
+        _ensure_climate()
 
     def one(tile):
         had = (tile.cache_path / "worldcover.tif").exists()
         t0 = time.time()
         paths = fetch_all(tile)
+        if owner[tile.name] in climate_regions:
+            from forest.fetch.climate import fetch_leaftype
+            try:
+                paths["leaftype"] = fetch_leaftype(tile)
+            except Exception as exc:  # noqa: BLE001 - optional: the build counts its forest as mixed
+                print(f"{tile.name}: leaf-type map FAILED ({exc})", flush=True)
         if not had:
             history.record("rasters", tile=tile.name, seconds=round(time.time() - t0, 1),
                            mb=round(sum(fsutil.size_mb(p) for p in paths.values()), 1))
@@ -113,6 +123,28 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _uses_climate(region: str) -> bool:
+    from forest.build import Settings
+    from forest.fetch.climate import uses_climate
+    try:
+        return uses_climate(Settings.load("medium", region).rules)
+    except Exception:  # noqa: BLE001 - no rules yet: decided at build time
+        return False
+
+
+def _ensure_climate() -> None:
+    """First use: the Köppen-Geiger climate map (one 131 MB zip; only the present-day map is kept)."""
+    from forest.fetch import climate, sources
+    if climate.climate_path().exists():
+        return
+    print("climate map missing: downloading", flush=True)
+    try:
+        climate.ensure_climate(sources.print_progress("climate"))
+        print("climate map: ready", flush=True)
+    except OSError as exc:
+        print(f"climate map download FAILED: {exc}", flush=True)
+
+
 def _ensure_country_files(region: str) -> None:
     """First use: download the OSM country file and the ecoregions map if they're missing."""
     from forest.fetch import sources
@@ -147,6 +179,8 @@ def cmd_data(args: argparse.Namespace) -> int:
         _ensure_country_files(args.region)
         build_clip(args.region)
         print("ecoregions: ready", flush=True)
+        if _uses_climate(args.region):
+            _ensure_climate()
         return _reextract(args.region)
 
     if args.what == "ecoregions":

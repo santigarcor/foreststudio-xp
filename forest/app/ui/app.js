@@ -594,7 +594,21 @@ function renderRules() {
         bare, " Also put sparse bushes on bare / sparsely vegetated ground"),
       twLab, twSel, twNote));
   }
-  box.append(el("h3", {}, `Elevation bands — ${bm.name}`));
+  {
+    const cl = el("input", { type: "checkbox" }); cl.checked = !!bm.climate;
+    cl.onchange = () => { bm.climate = cl.checked; renderRules(); };
+    box.append(el("h3", {}, `Tree types — ${bm.name}`), el("div", { class: "band" },
+      el("label", { class: "chk" }, cl, " Pick trees by leaf type and climate (recommended for new regions)"),
+      el("div", { class: "hint" }, bm.climate
+        ? "Each spot gets X-Plane's own forest for what the satellite sees there (conifers, broadleaves or mixed) "
+          + "and the local climate (very cold … very hot, dry … rainforest), e.g. pine flatwoods → warm conifers. "
+          + "Bushes follow the climate too (the scrub type above only says whether there are any). "
+          + "The elevation bands below are only used if the climate map can't be downloaded. FPS cost: about the "
+          + "same as the band types (none extra)."
+        : "Off: the elevation bands below decide the trees. Turn on to let the satellite leaf type and the "
+          + "climate map choose (one 131 MB download, once; ~1 MB per tile).")));
+  }
+  box.append(el("h3", {}, bm.climate ? `Elevation bands — ${bm.name} (fallback)` : `Elevation bands — ${bm.name}`));
   bm.band.forEach((b, i) => {
     const prevMax = i ? bm.band[i - 1].elev_max : 0;
     const name = el("input", { type: "text", value: b.name });

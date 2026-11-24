@@ -21,6 +21,7 @@ def sandbox(tmp_path, monkeypatch):
     import forest.assets.catalog as catalog
     import forest.config as config
     import forest.diskusage as diskusage
+    import forest.fetch.climate as climate
     import forest.fetch.ecoregions as eco
     import forest.fetch.osm_pbf as osm_pbf
     import forest.history as history
@@ -66,6 +67,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(osm_pbf, "PBF_DIR", cache / "osm")
     monkeypatch.setattr(eco, "ECO_DIR", cache / "ecoregions")
     monkeypatch.setattr(eco, "ZIP", cache / "ecoregions" / "raw" / "Ecoregions2017.zip")
+    monkeypatch.setattr(climate, "CLIMATE_DIR", cache / "climate")
     monkeypatch.setattr(catalog, "DEFAULT_CATALOG", proj / "config" / "catalog_xp12.json")
     try:
         import forest.app.api as api

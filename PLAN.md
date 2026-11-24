@@ -544,3 +544,25 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   (download with %, satellite maps n of N, reading OpenStreetMap) in the Tiles tab, the Data view and
   each tile's Data step in the Build queue. Checked on the scratch copy (Liechtenstein file removed,
   then its tile built: download 29/59/89 % → satellite maps → reading OSM → building).
+
+### 2026-11-24 — Medium thickness 0.8
+
+- Owner compared +30-082 (Florida) with simHeaven: ours thinner (avg density 171 vs 255). Medium
+  `global_density` 0.75 → 0.8 (shipped default and the owner's copy). Built medium tiles show as outdated.
+
+### 2026-11-24 — Trees by leaf type and climate (new regions)
+
+- Owner compared +30-082 (Jacksonville) with simHeaven: our tile was 82 % `broadleaves/warm_dry`
+  because RESOLVE files "Southeast US conifer savannas" under temperate *grasslands*, which the global
+  template mapped to broadleaves. simHeaven: mixed 866 km², conifers 560, wetland 526 at density 255
+  (climate zone wrm → `1200 forests/<season>/{mixed,coni,wetl_wdy}_wrm.for`), plus 688k random trees in
+  4-extras that our tile-wide `exclude_for` hides (X-Plane can't exclude only some forests).
+- General fix: `climate = true` biomes pick `lib/g8/<family>[_sp]_<temp>_<moist>.for` (the same files
+  as simHeaven's) from Copernicus LC100 forest type (leaf) × Köppen-Geiger 1 km (climate). Downloads:
+  leaf type = window of a 1 GB Zenodo GeoTIFF (tiled, 6 s, ~0.1–1 MB per tile); climate = 131 MB zip
+  once, 12 MB kept. All 168 names exist in X-Plane's library. On for every template biome except
+  mangrove; Colombia's hand-made rules unchanged (same fingerprint, no rebuild needed).
+- +30-082 rebuilt in a scratch folder: conifers (coni_wrm_wet) 2,535 km², mixed_wrm_wet 502, pine
+  plantations 546, bushes shrb_wrm_wet; Copernicus calls 64 % "unknown/mixed", 36 % conifer, 0 % broadleaf.
+  Not done: wetland (cypress swamp) forest from OSM `wetland=swamp` (needs an osm_pbf VERSION bump,
+  which re-extracts every tile).
