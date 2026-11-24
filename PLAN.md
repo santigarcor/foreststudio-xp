@@ -566,3 +566,18 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   plantations 546, bushes shrb_wrm_wet; Copernicus calls 64 % "unknown/mixed", 36 % conifer, 0 % broadleaf.
   Not done: wetland (cypress swamp) forest from OSM `wetland=swamp` (needs an osm_pbf VERSION bump,
   which re-extracts every tile).
+
+### 2026-11-24 — Every X-Plane vegetation type (climate biomes)
+
+- Owner: "map all of the possible vegetation types … as realistic as possible". Added to climate
+  biomes: OSM `leaf_type` override, cloud forest (rainforestm) in cool wet tropics, swamp forest
+  (wetl_wdy) in OSM swamps, savanna trees (sparse_tr) for thin forest in hot dry climates, wetland
+  bushes (wetl_shrb), climate orchards (orch_*), olive groves (template rule), climate broadleaf
+  town / single / row trees. Template: OSM `leaf_type=needleleaved` woods are no longer a pine
+  plantation. `osm_pbf.VERSION` 6 (all wetlands), `BUILD_VERSION` 5 → every tile re-extracts / shows
+  outdated once; Colombia's trees don't change (its biomes have no `climate`).
+- First try put wetland bushes on every marsh: +30-082 got ~490 km² of bushes on Jacksonville's salt
+  marshes (grass in reality; X-Plane's wetl_shrb has small trees). Now only where WorldCover also sees
+  shrubland, and salt marsh / reed beds are excluded → 0 km² on this tile.
+- +30-082 (scratch, fresh default rules): coni_wrm_wet 2,377 km², swamp forest 565 (simHeaven: 526
+  wetland), mixed 497, bushes 34, OSM-broadleaf 4; 23.9 M trees. OSM leaf_type covers ~770 km².

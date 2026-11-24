@@ -159,11 +159,18 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
     return out
 
 
+# OSM wetland=* values that can hold bushes ("" = natural=wetland without a type). Swamps are
+# wooded; mangroves have their own biome; salt marshes, reed beds, tidal flats and salterns are
+# grass, reeds or mud and get nothing.
+OPEN_WETLAND = ("", "marsh", "bog", "fen", "wet_meadow", "string_bog", "palsa_bog")
+
+
 def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
     """Real trees mapped in OSM: green areas (parks, gardens, golf, woods, forests),
     single trees (points), tree rows (lines), plantations; plus the areas that steer town trees
-    (residential vs industrial/commercial land), scrub (natural=scrub/heath) and mangroves
-    (natural=wetland + wetland=mangrove)."""
+    (residential vs industrial/commercial land), scrub (natural=scrub/heath), mangroves
+    (natural=wetland + wetland=mangrove), swamps (wooded wetland), open wetlands (marsh, bog, fen,
+    reedbed, wet meadow, salt marsh or untyped) and woods' leaf type ("leaf": (polygon, leaf_type))."""
     from forest.fetch.osm_pbf import (
         NO_TOWN_TREE_LANDUSE,
         TOWN_LANDUSE,
@@ -171,11 +178,13 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
         is_mangrove_area,
         is_plantation,
         is_scrub_area,
+        is_wetland_area,
     )
 
     data = load_osm(osm_json)
     out: dict[str, list] = {"green": [], "points": [], "rows": [], "plantations": [],
-                            "residential": [], "no_town_trees": [], "scrub": [], "airports": [], "mangrove": []}
+                            "residential": [], "no_town_trees": [], "scrub": [], "airports": [], "mangrove": [],
+                            "swamp": [], "wetland": [], "leaf": []}
 
     def areas(tags: dict, polys: list) -> None:
         if tags.get("aeroway") == "aerodrome":   # airport grounds: never town trees or scrub
@@ -183,6 +192,13 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
             return
         if is_mangrove_area(tags):
             out["mangrove"] += [p for p in polys if p.is_valid]
+            return
+        if is_wetland_area(tags):
+            kind = tags.get("wetland", "")
+            if kind == "swamp":
+                out["swamp"] += [p for p in polys if p.is_valid]
+            elif kind in OPEN_WETLAND:
+                out["wetland"] += [p for p in polys if p.is_valid]
             return
         lu = tags.get("landuse")
         key = ("residential" if lu in TOWN_LANDUSE else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE
@@ -202,6 +218,8 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
                 out["plantations"] += [(p, tags) for p in polys if p.is_valid]
             if is_green_area(tags):
                 out["green"] += polys
+                if tags.get("leaf_type"):
+                    out["leaf"] += [(p, tags["leaf_type"]) for p in polys if p.is_valid]
             areas(tags, polys)
             continue
         pts = _coords(el)
@@ -219,6 +237,8 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
                 poly = Polygon(pts)
                 if poly.is_valid:
                     out["green"].append(poly)
+                    if tags.get("leaf_type"):
+                        out["leaf"].append((poly, tags["leaf_type"]))
             else:
                 areas(tags, [Polygon(pts)])
     return out

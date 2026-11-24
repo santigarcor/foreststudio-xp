@@ -30,7 +30,7 @@ from forest import config
 from forest.tiles import Tile
 
 PBF_DIR = config.CACHE_ROOT / "osm"
-VERSION = 5  # 5: mangroves (natural=wetland + wetland=mangrove). Bump when the set of extracted features changes (old caches are re-extracted)
+VERSION = 6  # 5: mangroves (natural=wetland + wetland=mangrove); 6: every natural=wetland (swamps, marshes…). Bump when the set of extracted features changes (old caches are re-extracted)
 
 _WATERWAY = re.compile(r"^(river|riverbank|canal)$")
 _AEROWAY = re.compile(r"^(aerodrome|runway|taxiway|apron|helipad)$")
@@ -55,6 +55,11 @@ def is_mangrove_area(t) -> bool:
     return t.get("natural") == "wetland" and t.get("wetland") == "mangrove"
 
 
+def is_wetland_area(t) -> bool:
+    """Any OSM wetland: mangrove, swamp (wooded), marsh, bog, fen, reedbed, wet meadow…"""
+    return t.get("natural") == "wetland"
+
+
 def is_green_area(t) -> bool:
     return (t.get("natural") == "wood" or t.get("landuse") == "forest"
             or t.get("leisure") in GREEN_LEISURE)
@@ -74,14 +79,14 @@ def wanted_way(t) -> bool:
         or bool(_AEROWAY.match(t.get("aeroway", "")))
         or t.get("railway") == "rail" or t.get("power") == "line"
         or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
-        or is_mangrove_area(t)
+        or is_wetland_area(t)
     )
 
 
 def wanted_area_relation(t) -> bool:
     return ("building" in t or t.get("natural") == "water" or t.get("aeroway") == "aerodrome"
             or is_green_area(t) or is_plantation(t) or is_town_area(t) or is_scrub_area(t)
-            or is_mangrove_area(t))
+            or is_wetland_area(t))
 
 
 class _TileWriter:

@@ -191,7 +191,14 @@ tests/                              pytest suite (sandboxed)
      (`climate.KOPPEN`: e.g. Cfa → wrm/wet, Cfb → tmp/wet, Af → vhot/rain); sea cells take the nearest
      climate; evergreen-only regions always use `vhot` (rule 3); their scrub becomes
      `shrb_<temp>_<moist>` (the biome's scrub type only says whether there is any); elevation bands
-     are the fallback when the climate map is missing. These are the same files simHeaven X-World uses
+     are the fallback when the climate map is missing. On top (since 2026-11-24, BUILD_VERSION 5):
+     OSM `leaf_type` on woods beats the satellite; broadleaf/mixed in cool (vcld/cld/tmp), wet
+     (wet/rain) tropics (|lat| < 23.5) → cloud forest `rainforestm[_sp]_vhot_rain`; OSM
+     `wetland=swamp` → swamp forest `wetl_wdy_<temp>_<moist>`; thin broadleaf/mixed in hot/vhot ×
+     dry/sdry → savanna `sparse_tr_*`; wetland bushes `wetl_shrb_*` in OSM marsh/bog/fen/wet meadow
+     or WorldCover wetland **only where WorldCover also sees shrubland** (salt marsh / reed beds get
+     none); orchard/fruit plantations → `orch_<temp>_<moist>` (cold → tmp; wrm_sdry → wrm_dry);
+     town trees, OSM single trees and rows → `broad_<temp>_<moist>`. All 246 names exist in XP12. These are the same files simHeaven X-World uses
      (`1200 forests/<season>/coni_wrm.for` …);
    - **plantations** (OSM orchards/plantations/farmland/needleleaved forests) replace the biome
      asset inside their outline and are planted regardless of satellite tree share; rules with
@@ -474,7 +481,7 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
   require; written on every compile and on Install pack); app files go to `<data>/out/studio/`.
-- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 5)
+- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 6: every `natural=wetland`)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
 - Large inline edits: prefer the Edit tool; Python patch scripts via heredoc break on Windows

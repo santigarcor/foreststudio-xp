@@ -602,6 +602,10 @@ function renderRules() {
       el("div", { class: "hint" }, bm.climate
         ? "Each spot gets X-Plane's own forest for what the satellite sees there (conifers, broadleaves or mixed) "
           + "and the local climate (very cold … very hot, dry … rainforest), e.g. pine flatwoods → warm conifers. "
+          + "It also places swamp forest in OSM swamps, wetland bushes in marshes, bogs and reed beds, cloud "
+          + "forest in cool, wet tropical mountains, scattered savanna trees in hot, dry places, orchards for the "
+          + "climate, and the climate's broadleaf trees in towns and for OSM single trees. OSM woods tagged "
+          + "with a leaf type (conifer / broadleaf / mixed) win over the satellite. "
           + "Bushes follow the climate too (the scrub type above only says whether there are any). "
           + "The elevation bands below are only used if the climate map can't be downloaded. FPS cost: about the "
           + "same as the band types (none extra)."

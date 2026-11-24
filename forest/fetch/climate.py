@@ -12,10 +12,17 @@ elevation bands (and its bushes from lib/g8/shrb_<temperature>_<moisture>):
 
 Elevation is already in the climate map (mountains are colder classes), so bands aren't needed.
 Regions with `evergreen_only` use the very-hot (evergreen) family whatever the temperature (rule 3).
+
+Special families on top of the leaf type: OSM swamps → wooded wetland (`wetl_wdy`), broadleaf or
+mixed forest in cool, wet tropical mountains → montane rainforest / cloud forest (`rainforestm`), and
+thin broadleaf or mixed forest in hot, dry climates → savanna trees (`sparse_tr`). Open wetlands get
+wetland bushes (`wetl_shrb`), orchards follow the climate (`orch_<temp>_<moist>`), and town trees,
+OSM single trees and tree rows use the climate's broadleaf type.
 """
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -33,8 +40,10 @@ LEAF_FILE = "leaftype.tif"
 
 # Copernicus forest type: 0 unknown, 1 evergreen needle, 2 evergreen broad, 3 deciduous needle,
 # 4 deciduous broad, 5 mixed, 255 not forest.
-CONI, BROAD, MIXED = 0, 1, 2
-FAMILY = ("coni", "broad", "mixed")
+CONI, BROAD, MIXED, MONTANE, SWAMP = 0, 1, 2, 3, 4
+FAMILY = ("coni", "broad", "mixed", "rainforestm", "wetl_wdy")
+OSM_LEAF = {"needleleaved": CONI, "broadleaved": BROAD, "mixed": MIXED}   # OSM leaf_type → family
+TROPICS = 23.5          # cloud forest only between the tropics
 LEAF_WINDOW = 5         # leaf-type pixels (100 m) averaged around each one: 500 m, no salt-and-pepper
 LEAF_MAJORITY = 0.6     # share of conifer (or broadleaf) needed; anything in between is mixed
 
@@ -63,16 +72,49 @@ def uses_climate(rules: dict) -> bool:
 
 
 def asset_name(family: int, temp: str, moist: str, sparse: bool) -> str:
-    """X-Plane forest for a leaf type and climate (rainforest for broadleaves in tropical rain)."""
+    """X-Plane forest for a family and climate."""
+    sp = "_sp" if sparse else ""
+    if family == MONTANE:
+        return f"lib/g8/rainforestm{sp}_vhot_rain.for"
+    if family == SWAMP:
+        return f"lib/g8/wetl_wdy_{temp}_{moist}.for"
     if family == BROAD and temp == "vhot" and moist == "rain":
-        return f"lib/g8/rainforest{'_sp' if sparse else ''}_vhot_rain.for"
-    return f"lib/g8/{FAMILY[family]}{'_sp' if sparse else ''}_{temp}_{moist}.for"
+        return f"lib/g8/rainforest{sp}_vhot_rain.for"
+    if sparse and family != CONI and temp in ("hot", "vhot") and moist in ("dry", "sdry"):
+        return f"lib/g8/sparse_tr_{temp}_{moist}.for"     # savanna: a few big scattered trees
+    return f"lib/g8/{FAMILY[family]}{sp}_{temp}_{moist}.for"
+
+
+def shrub_name(temp: str, moist: str, wet: bool = False) -> str:
+    return f"lib/g8/{'wetl_shrb' if wet else 'shrb'}_{temp}_{moist}.for"
+
+
+def town_tree_name(temp: str, moist: str) -> str:
+    """Town trees, OSM single trees and tree rows: the climate's broadleaf type."""
+    return f"lib/g8/broad_{temp}_{moist}.for"
+
+
+_ORCHARD = re.compile(r"^lib/g8/(orch|fruit)_[a-z]+_[a-z]+\.for$")
+_MISSING = {"lib/g8/orch_wrm_sdry.for": "lib/g8/orch_wrm_dry.for"}   # not in X-Plane's library
+
+
+def orchard_name(asset: str, temp: str, moist: str) -> str | None:
+    """An orchard / fruit-tree plantation type for this climate, or None for other types."""
+    m = _ORCHARD.match(asset)
+    if not m:
+        return None
+    temp = "tmp" if temp in ("cld", "vcld") else temp   # no cold-climate orchards in X-Plane
+    name = f"lib/g8/{m.group(1)}_{temp}_{moist}.for"
+    return _MISSING.get(name, name)
 
 
 def all_assets() -> set[str]:
     """Every forest and bush type climate picking can use."""
-    return ({asset_name(f, t, m, s) for f in range(3) for t in TEMPS for m in MOISTS for s in (False, True)}
-            | {f"lib/g8/shrb_{t}_{m}.for" for t in TEMPS for m in MOISTS})
+    out = {asset_name(f, t, m, s) for f in range(5) for t in TEMPS for m in MOISTS for s in (False, True)}
+    out |= {shrub_name(t, m, w) for t in TEMPS for m in MOISTS for w in (False, True)}
+    out |= {town_tree_name(t, m) for t in TEMPS for m in MOISTS}
+    out |= {orchard_name(f"lib/g8/{k}_tmp_wet.for", t, m) for k in ("orch", "fruit") for t in TEMPS for m in MOISTS}
+    return out
 
 
 # ---------------------------------------------------------------- downloads

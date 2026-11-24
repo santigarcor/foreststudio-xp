@@ -13,7 +13,8 @@ It ships with **Colombia** (hand-tuned forest types). Other countries or states 
 **Data → Regions** from Geofabrik's list of OpenStreetMap downloads: a new region gets the 1° tiles
 its outline touches and default forest types that pick, for each spot, X-Plane's own forest for
 the leaf type seen by satellite (conifers, broadleaves or mixed) and the local climate (very cold …
-very hot, dry … rainforest). You can edit them in Build → Forest types. This needs a 131 MB climate map
+very hot, dry … rainforest), including swamp forest, cloud forest, savanna trees, wetland bushes,
+orchards and town trees for the climate. You can edit them in Build → Forest types. This needs a 131 MB climate map
 (downloaded once) and about 1 MB more per tile. Regions between the
 tropics use evergreen trees only; others use X-Plane's seasonal forests. Tiles on a border read
 every downloaded country file that covers them.

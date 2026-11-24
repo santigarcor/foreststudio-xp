@@ -11,6 +11,10 @@
 # satellite (conifers / broadleaves / mixed, Copernicus Land Cover 100 m) and the climate there
 # (Köppen-Geiger 1 km: very cold … very hot, dry … rainforest), e.g. Florida pine flatwoods →
 # lib/g8/coni_wrm_wet.for. Its elevation bands are then only used if the climate map is missing.
+# It also picks: swamp forest in OSM swamps, wetland bushes in marshes/bogs/reed beds, cloud forest
+# in cool, wet tropical mountains, savanna trees for thin forest in hot, dry climates, orchards for
+# the climate, and the climate's broadleaf type for town trees, OSM single trees and tree rows.
+# OSM leaf_type on woods (needleleaved / broadleaved / mixed) beats the satellite's leaf type.
 # Evergreen-only regions get the very-hot (evergreen) family of the same leaf type and moisture.
 
 sparse_below = 0.45
@@ -60,7 +64,9 @@ density = 0.6
 name = "conifer"
 label = "Conifer plantation / forest"
 color = [70, 120, 160]
-match = ["landuse=forest&leaf_type=needleleaved", "genus=Pinus", "genus=Picea", "trees=pine_trees"]
+# (OSM woods tagged leaf_type=needleleaved are natural conifer forest: climate biomes give them the
+# local conifer type instead.)
+match = ["genus=Pinus", "genus=Picea", "trees=pine_trees"]
 asset = "lib/vegetation/trees/coniferous/pine_medium.for"
 density = 0.7
 
@@ -81,6 +87,14 @@ match = ["crop=sugarcane", "trees=pineapple_plants", "crop=pineapple", "crop=ric
   "crop=potato", "crop=sugar_beet", "crop=grass", "crop=meadow"]
 asset = ""
 density = 0.0
+
+[[plantation]]
+name = "olive"
+label = "Olive groves"
+color = [150, 160, 90]
+match = ["trees=olive_trees", "crop=olive", "produce=olive", "produce=olives"]
+asset = "lib/g8/olive_wrm_sdry.for"
+density = 0.5
 
 [[plantation]]
 name = "orchard"
@@ -384,3 +398,4 @@ sparse = "lib/vegetation/forests/conifers/cold_low.for"
 "lib/g8/shrb_tmp_dry.for" = "lib/g8/shrb_hot_dry.for"
 "lib/g8/shrb_wrm_sdry.for" = "lib/g8/shrb_hot_sdry.for"
 "lib/g8/orch_tmp_wet.for" = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"
+"lib/g8/olive_wrm_sdry.for" = "lib/vegetation/trees/evergreen/kapok_tree_medium.for"

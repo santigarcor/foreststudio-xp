@@ -75,6 +75,8 @@ class Settings:
 # setting; a hand-set `mangrove_min_frac` in a profile still wins. Kept out of PROFILE_DEFAULTS
 # on purpose: that would change every tile's settings fingerprint and mark them all outdated.
 MANGROVE_MIN_FRAC = 0.3
+# In wetlands with some shrubland, herbaceous wetland adds this much to the bush share.
+WETLAND_SHRUB_BONUS = 0.3
 # Inside OSM-mapped mangroves, grass, herbaceous wetland and shrubland count this much as trees.
 OSM_MANGROVE_LOW_VEG = 0.5
 
@@ -207,9 +209,12 @@ def biome_raster(tile: Tile, grid: Grid, biomes: list[dict], region: str) -> np.
     return lut[eco]
 
 
-def climate_types(tile: Tile, grid: Grid, s: Settings, t0: float) -> np.ndarray | None:
-    """Per cell: leaf family * 24 + temperature * 4 + moisture (see forest.fetch.climate), for
-    biomes with `climate = true`. None (→ their elevation bands) if the climate map is missing."""
+def climate_types(tile: Tile, grid: Grid, s: Settings, t0: float, hints: dict | None = None,
+                  min_cover: float = 0.5) -> np.ndarray | None:
+    """Per cell: family * 24 + temperature * 4 + moisture (see forest.fetch.climate), for biomes
+    with `climate = true`. None (→ their elevation bands) if the climate map is missing.
+    Family = satellite leaf type, overridden by OSM `leaf_type` on woods; broadleaf/mixed in cool,
+    wet tropical mountains → cloud forest; OSM swamps → wooded wetland."""
     from forest import regions
     try:
         clim.ensure_climate(print_progress("climate") if not clim.climate_path().exists() else None)
@@ -224,12 +229,31 @@ def climate_types(tile: Tile, grid: Grid, s: Settings, t0: float) -> np.ndarray 
     if tm is None:
         return None
     temp, moist = tm
+    fam = clim.leaf_on_grid(tile, grid)
+    hints = hints or {}
+    n_osm = 0
+    for value, f in clim.OSM_LEAF.items():
+        polys = [p for p, lt in hints.get("leaf", []) if lt == value]
+        if polys:
+            m = coverage_mask(polys, grid, min_cover)
+            fam[m] = f
+            n_osm += int(m.sum())
+    # Cloud forest: X-Plane's montane rainforest where the tropics are cool and wet (Andes, Central
+    # America, East Africa…). Decided before evergreen-only regions move everything to "very hot".
+    lat_mid = abs(tile.lat + 0.5)
+    if lat_mid < clim.TROPICS:
+        cool = np.isin(temp, [clim.TEMPS.index(x) for x in ("vcld", "cld", "tmp")])
+        wet = np.isin(moist, [clim.MOISTS.index(x) for x in ("wet", "rain")])
+        fam[cool & wet & (fam != clim.CONI)] = clim.MONTANE
+    if hints.get("swamp"):
+        fam[coverage_mask(hints["swamp"], grid, min_cover)] = clim.SWAMP
     if regions.get(s.region).evergreen_only:
         temp[:] = clim.TEMPS.index("vhot")   # rule 3: only X-Plane's evergreen (very hot) family
-    fam = clim.leaf_on_grid(tile, grid)
     code = fam.astype(np.uint8) * 24 + temp * 4 + moist
-    shares = np.bincount(fam.ravel(), minlength=3) / fam.size
-    _log("leaf type: " + ", ".join(f"{n} {100 * v:.0f}%" for n, v in zip(("conifers", "broadleaves", "mixed"), shares))
+    shares = np.bincount(fam.ravel(), minlength=5) / fam.size
+    _log("tree families: " + ", ".join(f"{n} {100 * v:.0f}%" for n, v in zip(
+             ("conifers", "broadleaves", "mixed", "cloud forest", "swamp"), shares) if v)
+         + f" (OSM leaf_type on {n_osm:,} cells)"
          + "; climate: " + ", ".join(sorted({f"{clim.TEMPS[t]}_{clim.MOISTS[m]}"
                                              for t, m in set(zip(temp.ravel()[::997].tolist(), moist.ravel()[::997].tolist()))})), t0)
     return code
@@ -250,6 +274,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         built_frac = _class_share(wc, src, grid, (WC_BUILT,))
         # Grass and herbaceous wetland (+ shrubland below): inside OSM mangroves they count as half trees.
         low_veg_frac = _class_share(wc, src, grid, (WC_GRASS, WC_WETLAND))
+        wetland_frac = _class_share(wc, src, grid, (WC_WETLAND,))
         del wc
     tc = read_on_grid(paths["treecover2000"], grid, Resampling.bilinear) / 100.0
     loss = read_on_grid(paths["lossyear"], grid, Resampling.nearest)
@@ -329,7 +354,12 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                     assets.append(b[k])
     sparse = density < s.rules["sparse_below"]
     asset_idx = np.zeros(grid.shape, dtype=np.int16)
-    climate = climate_types(tile, grid, s, t0) if any(b.get("climate") for b in biomes) else None
+    climate = (climate_types(tile, grid, s, t0, hints, min_cover)
+               if any(b.get("climate") for b in biomes) else None)
+    # Cells whose biome picks trees by climate (they also get wetland bushes, climate orchards and
+    # climate town trees).
+    in_climate = (np.array([bool(b.get("climate")) for b in biomes])[biome_idx]
+                  if climate is not None else np.zeros(grid.shape, dtype=bool))
     for bi, bm in enumerate(biomes):
         in_biome = biome_idx == bi
         if not in_biome.any():
@@ -376,6 +406,18 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                 if pr["asset"] not in assets:
                     assets.append(pr["asset"])
                 asset_idx[sel] = assets.index(pr["asset"])
+                if clim.orchard_name(pr["asset"], "tmp", "wet") and (sel & in_climate).any():
+                    # Orchards / fruit trees for the local climate (orch_<temp>_<moisture>).
+                    csel = sel & in_climate
+                    tm = climate[csel] % 24
+                    idx = np.zeros(tm.shape, dtype=np.int16)
+                    for code in np.unique(tm):
+                        name = clim.orchard_name(pr["asset"], clim.TEMPS[int(code) // 4], clim.MOISTS[int(code) % 4])
+                        if name not in assets:
+                            assets.append(name)
+                        idx[tm == code] = assets.index(name)
+                    asset_idx[csel] = idx
+                    del csel, tm, idx
                 level_idx[sel] = int(np.argmin([abs(lv - float(pr.get("density", 0.7))) for lv in levels]))
         planted = plant_idx >= 0
         has_asset = np.isin(plant_idx, [i for i, pr in enumerate(plants) if pr.get("asset")])
@@ -396,6 +438,15 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         scrub_share = shrub_frac + np.where(on_bare, bare_frac, 0.0)
         osm_scrub = coverage_mask(hints["scrub"], grid, 0.5)
         scrub_share = np.where(osm_scrub, np.maximum(scrub_share, 0.7), scrub_share)
+        # Wetland bushes (climate biomes): in OSM marshes, bogs, fens and wet meadows and on
+        # WorldCover's herbaceous wetland, but only where the satellite also sees shrubs: most
+        # marshes are grass and reeds (Jacksonville's salt marshes: ~490 km² of bushes otherwise).
+        # Trees in wetlands stay trees (OSM swamps → swamp forest).
+        osm_wet = coverage_mask(hints.get("wetland", []), grid, 0.5)
+        wet = in_climate & (osm_wet | (wetland_frac >= p["scrub_min_frac"])) & (shrub_frac > 0)
+        wet_share = shrub_frac + WETLAND_SHRUB_BONUS * wetland_frac
+        scrub_share = np.where(wet, np.maximum(scrub_share, wet_share), scrub_share)
+        del wet_share, osm_wet
         scrub = scrub_share >= p["scrub_min_frac"]
         for _ in range(p.get("smooth_passes", 1)):
             scrub = median_filter(scrub.astype(np.uint8), size=3).astype(bool)
@@ -408,11 +459,12 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
                 if not sel.any():
                     continue
                 if bm.get("climate") and climate is not None:
-                    # Bushes for the local climate too (X-Plane's lib/g8/shrb_<temp>_<moisture>).
-                    tm = climate[sel] % 24
+                    # Bushes for the local climate (shrb_<temp>_<moisture>; wetl_shrb_… in wetlands).
+                    tm = (climate[sel] % 24).astype(np.int16) + 24 * wet[sel]
                     idx = np.zeros(tm.shape, dtype=np.int16)
                     for code in np.unique(tm):
-                        name = f"lib/g8/shrb_{clim.TEMPS[int(code) // 4]}_{clim.MOISTS[int(code) % 4]}.for"
+                        c24 = int(code) % 24
+                        name = clim.shrub_name(clim.TEMPS[c24 // 4], clim.MOISTS[c24 % 4], wet=int(code) >= 24)
                         if name not in assets:
                             assets.append(name)
                         idx[tm == code] = assets.index(name)
@@ -424,9 +476,9 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
             # Nearest density step, computed for scrub cells only (not a cells × levels array).
             level_idx[scrub] = np.argmin(np.abs(sd[scrub][:, None] - np.asarray(levels, dtype=np.float32)), axis=-1)
             del sd
-            _log(f"scrub: {int(scrub.sum()):,} cells", t0)
-        del on_bare, scrub_share, osm_scrub, has_scrub
-    del shrub_frac, bare_frac
+            _log(f"scrub: {int(scrub.sum()):,} cells (wetland bushes {int((scrub & wet).sum()):,})", t0)
+        del on_bare, scrub_share, osm_scrub, has_scrub, wet
+    del shrub_frac, bare_frac, wetland_frac
 
     # Town: built-up land (WorldCover) or OSM residential, not industrial/commercial, not forest.
     town = (built_frac >= p.get("town_min_built", 0.3)) | coverage_mask(hints["residential"], grid, 0.5)
@@ -443,6 +495,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         "excl_stats": excl_stats, "trees": trees, "excl": excl, "biome_idx": biome_idx, "raw": raw,
         "biomes": biomes, "level_idx": level_idx, "green": green, "hints": hints, "geoms": geoms,
         "plant_idx": plant_idx, "plants": plants, "scrub": scrub, "town": town,
+        "climate": climate, "in_climate": in_climate,
         "tree_cells": int(trees.sum()), "scrub_cells": int(scrub.sum()),
     }
 
@@ -478,6 +531,22 @@ def plantation_raster(items: list, plants: list[dict], grid: Grid, min_cover: fl
     return out
 
 
+def climate_tree_at(c: dict, rows, cols, fallback):
+    """Tree type for single, row and town trees at these grid cells: the climate's broadleaf type
+    in climate biomes, else `fallback` (a name, or a list with one name per cell)."""
+    rows, cols = np.asarray(rows), np.asarray(cols)
+    out = list(fallback) if isinstance(fallback, list) else [fallback] * rows.size
+    clim_code = c.get("climate")
+    if clim_code is None or not rows.size:
+        return out
+    inside = c["in_climate"][rows, cols]
+    codes = clim_code[rows, cols] % 24
+    for i in np.flatnonzero(inside):
+        code = int(codes[i])
+        out[i] = clim.town_tree_name(clim.TEMPS[code // 4], clim.MOISTS[code % 4])
+    return out
+
+
 def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     """Single trees (X-Plane point forests) and tree rows (line forests) from OSM."""
     from shapely import STRtree
@@ -504,17 +573,22 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
         return 0 <= r < grid.cells and 0 <= col < grid.cells and bool(c["trees"][r, col])
 
     polys: list[ForestPolygon] = []
+    def cell(lon: float, lat: float) -> tuple[int, int]:
+        return (min(max(int((n0 - lat) * grid.cells), 0), grid.cells - 1),
+                min(max(int((lon - w0) * grid.cells), 0), grid.cells - 1))
+
     if int(p.get("osm_single_trees", 1)):
         step = 1.0 / p["chunks_per_degree"]
-        groups: dict[tuple[int, int], list] = {}
-        kept = 0
-        for lon, lat in c["hints"]["points"]:
-            if not (w0 <= lon <= e0 and s0 <= lat <= n0) or in_forest(lon, lat) or blocked(Point(lon, lat)):
-                continue
-            groups.setdefault((int((lon - w0) / step), int((lat - s0) / step)), []).append((lon, lat))
-            kept += 1
-        for pts in groups.values():
-            polys.append(ForestPolygon(asset=asset, exterior=_pad3(pts), density=1.0, fill=FILL_POINTS))
+        groups: dict[tuple, list] = {}
+        kept = [(lon, lat) for lon, lat in c["hints"]["points"]
+                if w0 <= lon <= e0 and s0 <= lat <= n0 and not in_forest(lon, lat) and not blocked(Point(lon, lat))]
+        rc = [cell(lon, lat) for lon, lat in kept]
+        names = climate_tree_at(c, [r for r, _ in rc], [col for _, col in rc], asset)
+        for (lon, lat), name in zip(kept, names):
+            groups.setdefault((name, int((lon - w0) / step), int((lat - s0) / step)), []).append((lon, lat))
+        kept = len(kept)
+        for (name, _, _), pts in groups.items():
+            polys.append(ForestPolygon(asset=name, exterior=_pad3(pts), density=1.0, fill=FILL_POINTS))
         _log(f"OSM single trees: {kept} placed in {len(groups)} groups", t0)
     if int(p.get("osm_tree_rows", 1)):
         n_rows = 0
@@ -525,7 +599,9 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
                     pts = list(part.coords)
                     if len(pts) == 2:
                         pts.insert(1, ((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2))
-                    polys.append(ForestPolygon(asset=asset, exterior=pts, density=1.0, fill=FILL_LINE))
+                    r, col = cell(*pts[len(pts) // 2])
+                    name = climate_tree_at(c, [r], [col], asset)[0]
+                    polys.append(ForestPolygon(asset=name, exterior=pts, density=1.0, fill=FILL_LINE))
                     n_rows += 1
         _log(f"OSM tree rows: {n_rows}", t0)
     return polys
@@ -582,8 +658,9 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     step = 1.0 / p["chunks_per_degree"]
     groups: dict[tuple, list] = {}
     biome = c["biome_idx"][rows, cols]
-    for x, y, bi in zip(lon.tolist(), lat.tolist(), biome.tolist()):
-        groups.setdefault((asset_of[bi], int((x - w0) / step), int((y - s0) / step)), []).append((x, y))
+    names = climate_tree_at(c, rows, cols, [asset_of[bi] for bi in biome.tolist()])
+    for x, y, name in zip(lon.tolist(), lat.tolist(), names):
+        groups.setdefault((name, int((x - w0) / step), int((y - s0) / step)), []).append((x, y))
     polys: list[ForestPolygon] = []
     for (asset, _, _), pts in groups.items():
         for i in range(0, len(pts), MAX_POINTS_PER_POLYGON):
@@ -826,8 +903,9 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 4  # 2: scrub and town trees; 3: none of them inside airport grounds;
-# 4: OSM mangroves, mangrove thickness from WorldCover only
+BUILD_VERSION = 5  # 2: scrub and town trees; 3: none of them inside airport grounds;
+# 4: OSM mangroves, mangrove thickness from WorldCover only; 5: climate biomes: swamps, wetland bushes,
+# cloud forest, savanna trees, climate orchards / town trees, OSM leaf_type
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json", clim.LEAF_FILE)
 
 

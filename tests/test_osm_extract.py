@@ -31,7 +31,8 @@ def test_filters():
     assert not wanted_way({"landuse": "farmland"})
     assert not wanted_way({"name": "x"})
     assert wanted_way({"natural": "wetland", "wetland": "mangrove"})
-    assert not wanted_way({"natural": "wetland", "wetland": "marsh"})
+    assert wanted_way({"natural": "wetland", "wetland": "marsh"})       # wetland bushes
+    assert wanted_way({"natural": "wetland", "wetland": "swamp"})       # swamp forest
     assert is_plantation({"landuse": "orchard"}) and not is_plantation({"landuse": "forest"})
 
 
