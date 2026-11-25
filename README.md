@@ -41,12 +41,63 @@ every downloaded country file that covers them.
 
 - X-Plane 12
 - Windows 10/11 (main platform). macOS and Linux should work but haven't been tested much yet.
-- [Python 3.11 or newer](https://www.python.org/downloads/)
+- Nothing else for the installers below. Running from source needs [Python 3.11 or newer](https://www.python.org/downloads/).
 - Disk space: about 30–200 MB of downloaded data per tile, plus 5–15 MB per built tile.
   The OpenStreetMap country file is about 335 MB and the biome map about 150 MB, each downloaded once.
 - Memory: a build needs about 3–5 GB of RAM. Several tiles can build at the same time if you have more.
 
 ## Install
+
+Download the file for your system from the
+[latest release](https://github.com/santigarcor/foreststudio-xp/releases/latest). Each one includes
+its own Python and everything ForestStudio needs; `SHA256SUMS.txt` lists their checksums.
+
+### Windows 10/11
+
+Run `ForestStudio-XP-<version>-windows-x64-setup.exe`. It installs for your user only (no admin
+rights) into `%LOCALAPPDATA%\Programs\ForestStudio XP` and adds ForestStudio XP to the Start menu
+(and the desktop if you tick it). The installer isn't code-signed yet, so Windows SmartScreen may say
+"Windows protected your PC": click **More info → Run anyway**.
+
+The window uses Microsoft Edge WebView2, which Windows 10/11 already have. To update, run the newer
+setup over the old one. **Uninstalling** (Settings → Apps) removes only the program: your data folder
+(downloads, built tiles, settings) and the forest pack link in X-Plane stay. To remove those too,
+press **Uninstall pack** in the app first, then delete the data folder shown in Settings.
+
+### macOS
+
+Open `ForestStudio-XP-<version>-macos-arm64.dmg` (Apple Silicon) or `-macos-x86_64.dmg` (Intel) and drag
+**ForestStudio XP** into Applications. The app isn't signed by Apple, so the first launch is blocked:
+
+1. Open ForestStudio XP once; macOS says it can't be opened. Click **Done** (not Move to Trash).
+2. Open *System Settings → Privacy & Security*, scroll down to "ForestStudio XP was blocked" and click
+   **Open Anyway**, then confirm.
+
+(Or in Terminal: `xattr -dr com.apple.quarantine "/Applications/ForestStudio XP.app"`.) After that it
+opens normally.
+
+### Linux (x86-64)
+
+```sh
+tar xzf ForestStudio-XP-<version>-linux-x86_64.tar.gz
+cd ForestStudio-XP-<version>-linux-x86_64
+./foreststudio-xp          # start the app
+./install.sh               # optional: add it to your applications menu (./install.sh --remove undoes it)
+```
+
+The window uses Qt WebEngine (included). It needs a few common system libraries that most desktops
+already have; on Debian/Ubuntu:
+
+```sh
+sudo apt install libegl1 libgl1 libxkbcommon-x11-0 libnss3 libxcomposite1 libxdamage1 libxrandr2 \
+  libxtst6 libasound2 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+  libxcb-shape0 libxcb-xinerama0
+```
+
+(Fedora: `sudo dnf install mesa-libEGL libxkbcommon-x11 nss libXcomposite libXdamage libXrandr libXtst
+alsa-lib xcb-util-cursor xcb-util-wm xcb-util-keysyms`.) `./foreststudio-xp cli --help` runs the command line.
+
+### From source
 
 ```powershell
 git clone https://github.com/santigarcor/foreststudio-xp.git
@@ -57,7 +108,7 @@ python -m venv .venv
 
 Keep the `-e` (editable install): the app reads its default settings and the bundled DSFTool
 from the downloaded folder. A plain `pip install .` copies only the program and starts without
-them. A packaged download is planned.
+them.
 
 Start the app:
 
@@ -67,6 +118,7 @@ Start the app:
 
 On macOS / Linux use `.venv/bin/python -m pip install -e .` and start it with `.venv/bin/foreststudio-xp`.
 If macOS refuses to run the bundled DSFTool, allow it under *System Settings → Privacy & Security*.
+On Linux the source install uses Qt too (installed by pip).
 
 Everything else ForestStudio needs, including DSFTool from Laminar's X-Plane Scenery Tools, is
 included or downloaded automatically.
@@ -128,6 +180,10 @@ The app runs these behind the scenes; they're also handy on their own:
 .venv\Scripts\forest data osm --update                    # get a newer OpenStreetMap file
 .venv\Scripts\forest app                                  # open the app
 ```
+
+With the Windows installer use `forest.cmd` in the install folder
+(`& "$env:LOCALAPPDATA\Programs\ForestStudio XP\forest.cmd" build --tile +06-076 --compile`); on Linux
+`./foreststudio-xp cli …`.
 
 ## Data sources and credits
 

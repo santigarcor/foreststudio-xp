@@ -70,7 +70,7 @@ def check(folder: str) -> dict:
     xp = config.load().xplane_root
     if str(xp) not in ("", ".") and _inside(target, xp):
         return {"ok": False, "error": "Don't put ForestStudio's data inside the X-Plane folder."}
-    if _inside(target, config.REPO_ROOT):
+    if any(_inside(target, d) for d in config.program_folders()):
         return {"ok": False, "error": "Don't put the data inside ForestStudio's program folder."}
     parent = _existing_parent(target)
     if not parent.exists():

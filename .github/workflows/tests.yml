@@ -5,13 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:   # the release workflow runs the whole suite before it builds anything
 
 permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  # github.workflow is the caller's name when called ("Release"), so a release never shares (or
+  # cancels) the group of an ordinary push run; and a tag's run is never cancelled.
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   test:
@@ -40,7 +43,7 @@ jobs:
 
       - name: Lint (ruff)
         if: matrix.os == 'ubuntu-latest'   # once is enough; the rules don't depend on the OS
-        run: python -m ruff check forest tests
+        run: python -m ruff check forest tests tools/package
 
       - name: "Tests (sandboxed: temp folders only, no X-Plane, no network)"
         run: python -m pytest -q -ra

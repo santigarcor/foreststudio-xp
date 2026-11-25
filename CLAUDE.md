@@ -49,8 +49,43 @@ python -m venv .venv
 .venv\Scripts\foreststudio-xp.exe        # or double-click "ForestStudio XP.lnk" (per-machine shortcut)
 # tests
 .venv\Scripts\python -m pytest -q        # all (≈8 s);  -m "not integration" for the fast ones
-.venv\Scripts\ruff check forest tests    # lint (also in CI)
+.venv\Scripts\ruff check forest tests tools/package   # lint (also in CI)
+# an installer for this system (needs uv; Windows also Inno Setup 6)
+.venv\Scripts\python tools/package/build.py --check      # → dist/
 ```
+
+### Releasing
+
+The version lives only in `forest/__init__.py` `__version__` (pyproject's version is dynamic from it;
+shown in the header, Settings → About and the pack's `CREDITS.txt`). To release: bump `__version__`, add
+`docs/releases/<v>.md` (the release notes, required) and a `CHANGELOG.md` entry, commit, and tag
+`v<v>` (owner only; a `-` in the tag, e.g. `v0.2.0-beta1`, makes a pre-release).
+`.github/workflows/release.yml` then runs the test suite (`tests.yml` is `workflow_call`-able), creates
+a **draft** release with those notes, builds the installers on windows-latest, macos-15 (arm64),
+macos-15-intel and ubuntu-22.04 (`tools/package/build.py --check`, each uploads
+`<artifact>` + `<artifact>.sha256`), merges the checksums into `SHA256SUMS.txt` and publishes the
+release; if any build fails it stays a draft. Manual runs (workflow_dispatch) only make workflow
+artifacts (7 days). Dependencies change → `uv lock` (CI checks `uv lock --check`).
+
+**Packaging** (`tools/package/`, 2026-11-25; no PyInstaller): a python-build-standalone CPython
+(`build.PYTHON`, fetched by uv) + the `uv.lock` runtime deps (wheels only, except the tiny
+`proxy-tools` sdist) + the app as git-tracked source in the repo layout:
+`<root>/python/…` and `<root>/app/{forest,config,tools/xptools/<this system>,LICENSE,README.md,CHANGELOG.md}`,
+so `config.REPO_ROOT` = `<root>/app` and nothing else changes. A `foreststudio_xp.pth` in site-packages
+puts `<root>/app` on the path; launchers run `python -I -m forest.app.main` (`-I`: no PYTHONPATH/user
+site; workers and `Api.restart_app` inherit the flags). Unused stdlib (Tk, tests, IDLE) is dropped and
+everything precompiled. `smoke.py` (run by `--check` with the bundled Python, `FORESTSTUDIO_HOME` = temp)
+checks imports + the webview backend, defaults, DSFTool, the CLI and a worker process (pythonw on
+Windows). Per OS: Windows Inno Setup (`windows/foreststudio-xp.iss`: per-user, no admin,
+`{userpf}\ForestStudio XP`, fixed AppId GUID — never change it, shortcuts = `pythonw.exe -I -m
+forest.app.main` with AppUserModelID `ForestStudio.XP`, upgrade wipes `python\`/`app\` first, uninstall
+removes only those two + `forest.cmd`, never the data folder or the X-Plane link); macOS `.app` (shell
+launcher, Info.plist, icns via sips/iconutil, ad-hoc `codesign -s -` on unsigned Mach-O files, dmg via
+hdiutil; unsigned → README's "Open Anyway" step); Linux tar.gz (`foreststudio-xp` launcher, `cli`
+subcommand, `install.sh` for a .desktop entry). **Linux uses pywebview's Qt backend** (PyQt6 +
+PyQt6-WebEngine, `sys_platform == 'linux'` deps): GTK needs PyGObject, which has no wheels and can't
+come from the distro for a bundled Python. `config.program_folders()` = the code folder + the install
+folder, refused as a data folder.
 
 - Python 3.11+ (this PC: 3.15; all deps have 3.15 wheels). Windows is the target platform.
 - **DSFTool is bundled** for all three systems (XPTools 24-5, DSFTool 2.4.0-b1, Laminar Research,
@@ -186,6 +221,9 @@ config/                             DEFAULTS shipped with the app (user copies l
   rules/colombia.toml               biomes, elevation bands, plantations, single-tree asset
   local.example.toml                template for ~/.foreststudio/config/local.toml
 tools/xptools/                      bundled DSFTool + license notes
+tools/package/                      release installers: build.py, smoke.py, windows/ (Inno), macos/, linux/
+docs/releases/<version>.md          release notes (the GitHub Release text); CHANGELOG.md = all versions
+uv.lock                             locked dependencies the installers bundle
 tests/                              pytest suite (sandboxed)
 ```
 
@@ -555,8 +593,8 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 
 ## Parked ideas / not done yet
 
-- First public release: packaged Windows build (PyInstaller zip / installer) as a GitHub Release,
-  version number + changelog (shown in About), README screenshots, issue templates/CONTRIBUTING.
+- First public release: README screenshots, issue templates/CONTRIBUTING; code signing (Windows
+  Authenticode, Apple Developer ID + notarization) for the installers.
 - Owner checks in the sim: town-tree density, scrub, xeric trees, the new OSM mangroves (SKCG).
 - OSM multipolygon holes are dropped: ~80 km² of forest on river islands (+07-074, +06-075) is cut
   as water. Fix parked (changes tiles; see PLAN.md 2026-11-21).

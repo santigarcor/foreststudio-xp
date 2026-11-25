@@ -19,3 +19,6 @@ config/catalog_xp12.json
 
 # Claude Code: personal settings stay local (launch.json is shared)
 .claude/settings.local.json
+
+# Installers made by tools/package/build.py
+dist/

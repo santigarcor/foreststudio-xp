@@ -10,7 +10,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from forest import config, fsutil
+from forest import __version__, config, fsutil
 from forest.app import settings as st
 from forest.assets.catalog import load_catalog
 from forest.build import OVERLAY_CUT, OVERLAY_OSM, OVERLAY_PALETTE, OVERLAY_SCRUB, OVERLAY_SHADE, OVERLAY_TOWN
@@ -190,11 +190,14 @@ class Api:
             win = webview.windows[0]
         except Exception:  # noqa: BLE001 - dev server: no window to restart
             return {"ok": False, "error": "Restart the app to use the new folder."}
+        # pythonw: no console. The new window waits for this one's app lock (forest/app/single.py).
+        # The same interpreter flags as this process (-I in an installed build: tools/package).
+        import subprocess
+
         from forest import proc as hidden
         from forest.app.main import RESTART_FLAG
-
-        # pythonw: no console. The new window waits for this one's app lock (forest/app/single.py).
-        hidden.popen([sys.executable, "-m", "forest.app.main", RESTART_FLAG], cwd=REPO_ROOT)
+        flags = subprocess._args_from_interpreter_flags()
+        hidden.popen([sys.executable, *flags, "-m", "forest.app.main", RESTART_FLAG], cwd=REPO_ROOT)
         win.destroy()
         return {"ok": True}
 
@@ -220,6 +223,7 @@ class Api:
 
         default = regions.default_name()
         return {
+            "version": __version__,
             "profiles": st.list_profiles(),
             "regions": regions.names(),
             "region_info": {n: regions.get(n).info() for n in regions.names()},

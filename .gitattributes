@@ -1,0 +1,6 @@
+# Shell scripts and macOS/Linux launchers must keep LF line endings (a CRLF shebang won't run).
+*.sh                            text eol=lf
+tools/package/linux/*           text eol=lf
+tools/package/macos/*           text eol=lf
+*.cmd                           text eol=crlf
+*.iss                           text eol=crlf

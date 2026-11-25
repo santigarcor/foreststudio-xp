@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from forest import __version__
+
 CREDITS_FILE = "CREDITS.txt"
 
 DATA = [
@@ -58,12 +60,12 @@ SOFTWARE = [
 
 
 def as_dict() -> dict:
-    return {"data": DATA, "software": SOFTWARE}
+    return {"version": __version__, "data": DATA, "software": SOFTWARE}
 
 
 def credits_text() -> str:
     lines = [
-        "ForestStudio XP forests - forest overlay for X-Plane 12, made with ForestStudio XP",
+        f"ForestStudio XP forests - forest overlay for X-Plane 12, made with ForestStudio XP {__version__}",
         "https://github.com/santigarcor/foreststudio-xp (GPL-3.0)",
         "",
         "Built from these data sources (their licenses require this notice):",

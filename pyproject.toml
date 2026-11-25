@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foreststudio-xp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "ForestStudio XP: build X-Plane 12 forest overlays from land-cover, biome and OpenStreetMap data"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -14,7 +14,12 @@ dependencies = [
   "osmium>=4.0",      # reads the Geofabrik .osm.pbf extract
   "pyshp>=2.3",       # reads the RESOLVE ecoregions shapefile
   "psutil>=6.0",      # cores / RAM for parallel builds, peak memory per build
-  "pywebview>=6.2",   # the desktop window (Edge WebView2 on Windows)
+  "pywebview>=6.2",   # the desktop window (Edge WebView2 on Windows, WKWebView on macOS)
+  # Linux: Qt WebEngine. The GTK backend needs PyGObject, which has no wheels and can't come from
+  # the distro's python3-gi for the bundled Python of the release builds.
+  "PyQt6>=6.7; sys_platform == 'linux'",
+  "PyQt6-WebEngine>=6.7; sys_platform == 'linux'",
+  "qtpy>=2.4; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -29,13 +34,16 @@ foreststudio-xp = "forest.app.main:main"
 [tool.setuptools.packages.find]
 include = ["forest*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "forest.__version__"}
+
 [tool.setuptools.package-data]
 "forest.app" = ["ui/*", "ui/vendor/leaflet/*", "ui/vendor/leaflet/images/*", "icons/*"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["tools"]
+extend-exclude = ["tools/xptools"]
 
 [tool.ruff.lint]
 # pyflakes (unused imports/variables, undefined names), pycodestyle errors, import order, bugbear

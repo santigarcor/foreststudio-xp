@@ -745,6 +745,7 @@ function badges() {
 
 async function init() {
   S = await api().get_state();
+  if (S.version) $("#version").textContent = `v${S.version} · X-Plane 12 forests`;
   badges();
   await fillSelect("#profile", S.profiles, "medium");
   await fillRegionSelects();
