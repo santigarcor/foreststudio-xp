@@ -352,7 +352,9 @@ old records without them load as builds. Only one job (build or download) runs a
   built, installed, selected; **outdated** = orange; no ortho status — not relevant); click/shift-click selection
   (no "select all": the owner selects by hand); **Select outdated**; forest overlay (colour = biome
   or plantation, lilac = scrub, brightness = density, red = cut out, yellow = OSM trees, light blue =
-  town trees) with legend; sidebar tabs:
+  town trees) with legend. **The map updates as each tile finishes** during a job (`poll()` →
+  `refreshFinished`: overlay + status colours + Tile info, one `refreshStatus()` per batch of newly
+  finished tiles; selection kept), not only when the whole job ends; sidebar tabs:
   - **Tiles**: selection, **X-Plane pack** (Install/Uninstall pack, ini warnings), Build with
     "Builds at the same time: Auto (N)/1…max", time & disk **estimate** (from `history.jsonl`
     medians), confirmation for ≥10 tiles or >30 min, Delete selected tiles (built tiles and/or

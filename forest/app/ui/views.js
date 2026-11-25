@@ -190,6 +190,7 @@ async function startDataJob(kind, tiles, force, regionName) {
 function dataJobStarted(r) {   // a download job is running: progress bar, refresh when it ends
   window._buildTotal = Math.max(1, r.tiles);
   if (typeof setRunning === "function") setRunning(true);
+  if (typeof seenFinished !== "undefined") seenFinished.clear();
   if (typeof poll === "function") poll();
   refreshData();
   watchDataJob();

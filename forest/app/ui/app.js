@@ -655,6 +655,7 @@ async function startBuild() {
   window._buildTotal = tiles.length;
   if (r.job && typeof selectedJob !== "undefined") selectedJob = r.job;   // Build queue opens this run
   setRunning(true);
+  seenFinished.clear();
   poll();
 }
 
@@ -663,6 +664,22 @@ function setRunning(on) {
   if (on) $("#delete").disabled = true; else renderSelection();
   $("#progress").classList.toggle("hidden", !on);
   if (on) $("#openQueue").classList.remove("hidden");
+}
+
+// Tiles of the running job already shown on the map (the map updates as each tile finishes,
+// not only when the whole job ends). Cleared whenever a new job starts polling.
+let seenFinished = new Set();
+
+async function refreshFinished(j) {
+  const fresh = [...j.done, ...j.failed].filter(t => !seenFinished.has(t));
+  if (!fresh.length) return;
+  fresh.forEach(t => seenFinished.add(t));
+  // A failed refresh must not stop the polling.
+  try {
+    for (const t of fresh) if (j.done.includes(t)) await reloadOverlay(t);   // a failed tile keeps its old build
+    await refreshStatus();                                                     // once for the whole batch
+    if (lastClicked && fresh.includes(lastClicked)) await showTileInfo(lastClicked);
+  } catch (e) { console.warn("refresh after finished tiles failed", e); }
 }
 
 async function poll() {
@@ -688,8 +705,10 @@ async function poll() {
     sbJob.textContent = j.running ? `● ${$("#progressText").textContent}` : (n ? $("#progressText").textContent : "");
     sbJob.onclick = () => { if (typeof showView === "function") showView("works"); };
   }
-  if (j.running) polling = setTimeout(poll, 800);
-  else {
+  if (j.running) {
+    await refreshFinished(j);
+    polling = setTimeout(poll, 800);
+  } else {
     setRunning(false);
     for (const t of [...j.done, ...j.failed]) await reloadOverlay(t);
     await refreshStatus();
