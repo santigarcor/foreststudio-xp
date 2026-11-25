@@ -694,3 +694,9 @@ An outside review of the work so far (B1–B3, N1–N8, P1–P8) was agreed with
   - Town-tree counts are unchanged, but 35–45 % of the town trees sit at other random spots in the same town cells: a few candidate spots changed, so the seeded draw picks a different subset.
   - Times vs the baseline: 43.7/18.4/40.5/27.8 s (−32…−42 %).
 - Not done: gzip of `osm.json` (later); B2 waits for the packaging work.
+
+### 2026-11-25 — First run on a Mac; builds need an X-Plane folder
+
+- First real run on macOS (Apple Silicon, macOS 26, Homebrew Python 3.15.2): every dependency has a 3.15 arm64 wheel, the app opens, all tests pass, and the bundled macOS DSFTool compiles (Gatekeeper did not block it).
+- Found there: Build and "Download data" for tiles started without an X-Plane folder, downloaded the OSM file and satellite maps, then failed at the elevation step. Both now refuse at once with "Set your X-Plane 12 folder in Settings first" (`Api._xplane_missing`, same check as Settings). The other downloads (OSM file, ecoregions, region) still work without X-Plane.
+- Not done yet: a real tile build on the Mac (needs `1200 forests` + a base-mesh DSF copied from the Windows PC).

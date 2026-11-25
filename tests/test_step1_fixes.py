@@ -1,11 +1,13 @@
 """Pre-release fixes: no silent Overpass fallback, sea tiles, one window per data folder,
 recent memory peaks, job views under the lock, JSON-only dev server, TOML strings."""
 
+import dataclasses
 import json
 import threading
 import tomllib
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -75,6 +77,23 @@ def test_sea_only_tiles_are_refused(sandbox):
     r = a.start_build(["+06-076", "+06-077"], "medium")
     assert not r["ok"] and "+06-077" in r["error"] and "sea only" in r["error"]
     assert "+06-076" not in r["error"]
+
+
+def test_builds_and_tile_downloads_need_an_xplane_folder(sandbox):
+    """Without X-Plane (no elevation, no forest types) a job would download data, then fail."""
+    import forest.app.api as api
+    from forest import config
+
+    a = api.Api.__new__(api.Api)
+    a.job = api.Job()
+    cfg = config.load()
+    for root in ("", sandbox.tmp / "not-xplane"):
+        a.cfg = dataclasses.replace(cfg, xplane_root=Path(root))
+        r = a.start_build(["+06-076"], "medium")
+        assert not r["ok"] and "X-Plane 12 folder in Settings" in r["error"]
+        r = a.start_data_job("tiles", ["+06-076"])
+        assert not r["ok"] and "X-Plane 12 folder in Settings" in r["error"]
+    assert not a.job.running and a.job.record is None   # nothing was started
 
 
 # ---------- N5: one window per data folder ----------

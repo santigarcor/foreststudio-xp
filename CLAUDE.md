@@ -177,7 +177,9 @@ forest/
                    OS lock on <data>/app.lock; a restart waits up to 20 s for it),
                    ui/{index.html,app.css,app.js,views.js}, ui/vendor/leaflet (Leaflet 1.9.4,
                    BSD-2, shipped so the map works without a CDN)
-                   api.start_build refuses sea-only tiles (no base-mesh DSF in X-Plane's Global Scenery)
+                   api.start_build refuses sea-only tiles (no base-mesh DSF in X-Plane's Global Scenery);
+                   it and the tile download (start_data_job 'tiles') refuse without a valid
+                   X-Plane folder (_xplane_missing: elevation + forest types come from it)
 config/                             DEFAULTS shipped with the app (user copies live in ~/.foreststudio/config)
   regions/colombia.toml             the region: map tiles, OSM extract, ecoregion box, evergreen_only
   profiles/{low,medium,high}.toml   performance profiles

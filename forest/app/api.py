@@ -509,12 +509,25 @@ class Api:
         from forest.resources import auto_workers
         return auto_workers()
 
+    def _xplane_missing(self) -> str | None:
+        """Why tiles can't be downloaded or built here, or None. Both read X-Plane: the elevation
+        comes from its base mesh and the forest types from its library, so without a valid folder a
+        job would download hundreds of MB and then fail."""
+        root = self.cfg.xplane_root
+        x = config.check_xplane(root if str(root) not in ("", ".") else None)
+        if x["ok"]:
+            return None
+        return ("Set your X-Plane 12 folder in Settings first: ForestStudio reads the ground height "
+                "and the forest types from it (missing: " + "; ".join(x["problems"]) + ").")
+
     def start_build(self, tiles: list[str], profile: str, workers: int = 0) -> dict:
         """Build tiles of any regions together: each with its own region's forest types
         (regions.owner). Every built tile goes into the one linked pack, so it's in X-Plane at once."""
         from forest import regions
         if self.job.running:
             return {"ok": False, "error": "a build is already running"}
+        if err := self._xplane_missing():
+            return {"ok": False, "error": err}
         try:
             names = [Tile.parse(x).name for x in tiles]
         except ValueError as exc:
@@ -691,6 +704,8 @@ class Api:
         if self.job.running:
             return {"ok": False, "error": "A build or download is already running."}
         if kind == "tiles":
+            if err := self._xplane_missing():   # a tile's data includes its elevation
+                return {"ok": False, "error": err}
             try:
                 names = sorted({Tile.parse(x).name for x in tiles or []})
             except ValueError as exc:
