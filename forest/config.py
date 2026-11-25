@@ -56,7 +56,7 @@ def write_location(folder: Path | None) -> None:
         return
     LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOCATION_FILE.write_text("# ForestStudio XP keeps its data here (chosen in Settings).\n"
-                             f"data_folder = {json.dumps(str(Path(folder)))}\n",  # TOML basic string
+                             f"data_folder = {toml_str(str(Path(folder)))}\n",
                              encoding="utf-8")
 
 
@@ -244,21 +244,28 @@ def load(path: Path | None = None) -> LocalConfig:
     return LocalConfig(xplane_root=xp, dsftool=ds, from_file=bool(xp_s))
 
 
+def toml_str(s: str) -> str:
+    """A TOML basic string: quotes, backslashes, newlines and every control character escaped
+    (json.dumps covers all but DEL, which TOML also forbids raw). Non-ASCII stays as is: TOML
+    rejects the surrogate pairs json would write for emoji."""
+    return json.dumps(str(s), ensure_ascii=False).replace("\x7f", "\\u007F")
+
+
 def save(xplane_root: Path | str, dsftool: Path | str | None = None, path: Path | None = None) -> Path:
     """Write config/local.toml. DSFTool is written only when a custom one is given (the bundled one
     is found automatically); inside the project it's stored relative (portable)."""
     path = path or LOCAL_TOML
     text = ("# ForestStudio XP - this machine's settings (written by the app; not in git).\n"
             "# ForestStudio only READS from the X-Plane install, except its own Custom Scenery/forest_* link.\n\n"
-            # json.dumps = a TOML basic string; a literal '...' breaks on paths like C:\Users\O'Neil
-            f"[xplane]\nroot = {json.dumps(str(Path(xplane_root)))}\n")
+            # a TOML basic string (toml_str); a literal '...' breaks on paths like C:\Users\O'Neil
+            f"[xplane]\nroot = {toml_str(str(Path(xplane_root)))}\n")
     if dsftool and Path(dsftool).resolve() != BUNDLED_DSFTOOL.resolve():
         ds = Path(dsftool)
         try:
             ds_txt = str(ds.resolve().relative_to(REPO_ROOT))
         except ValueError:
             ds_txt = str(ds)
-        text += f"\n[tools]\n# custom DSFTool (optional; the bundled one is used otherwise)\ndsftool = {json.dumps(ds_txt)}\n"
+        text += f"\n[tools]\n# custom DSFTool (optional; the bundled one is used otherwise)\ndsftool = {toml_str(ds_txt)}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path

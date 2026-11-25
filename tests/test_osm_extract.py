@@ -177,3 +177,50 @@ def test_fast_way_path_writes_what_the_per_node_path_writes(sandbox, monkeypatch
     odd = json.loads(out["odd", False][0])["elements"]
     assert [e["id"] for e in odd] == [1, 2, 5]           # 3: one point; 4: one valid point left
     assert len(odd[0]["geometry"]) == 4                  # repeated node kept
+
+
+def test_lean_layout_and_old_cache_converted_in_place(sandbox):
+    """VERSION 8 writes [lon, lat] pairs; a version-7 file ({"lat", "lon"} points, same features)
+    is converted in place on the next check: same text a fresh read writes, same file date, and
+    the same geometries for the build."""
+    import os
+
+    from forest.exclusions import osm_geometries, osm_tree_hints
+
+    pbf = sandbox.tmp / "test.osm"
+    pbf.write_text(OSM)
+    t = Tile.parse("+06-076")
+    extract_tiles([t], pbf)
+    f = t.cache_path / "osm.json"
+    fresh = f.read_text(encoding="utf-8")
+    lean = json.loads(fresh)
+    way = next(e for e in lean["elements"] if e["id"] == 101)
+    assert way["geometry"][0] == [-75.5, 6.1]
+
+    def old(geom):
+        return [{"lat": la, "lon": lo} for lo, la in geom]
+
+    v7 = {"version": 7, "elements": [
+        {**e, "geometry": old(e["geometry"])} if "geometry" in e else e for e in lean["elements"]]}
+    f.write_text('{"version": 7, "elements": [\n'
+                 + ",\n".join(json.dumps(e, separators=(",", ":")) for e in v7["elements"]) + "\n]}\n",
+                 encoding="utf-8")
+    os.utime(f, (1_700_000_000, 1_700_000_000))
+    assert is_current(t, [pbf])
+    assert f.read_text(encoding="utf-8") == fresh                 # same bytes as a fresh read
+    assert f.stat().st_mtime == 1_700_000_000                    # date kept: tiles not outdated
+    for fn in (lambda d: osm_geometries(d, 6.5), osm_tree_hints):
+        a, b = fn(v7), fn(json.loads(fresh))
+        assert {k: [getattr(g, "wkb", g) for g in v] for k, v in a.items() if k != "plantations"} == \
+               {k: [getattr(g, "wkb", g) for g in v] for k, v in b.items() if k != "plantations"}
+
+
+def test_point_and_line_forests_keep_their_points():
+    from forest.dsf.text import FILL_LINE, FILL_POINTS, ForestPolygon, OverlayTile
+
+    ring = [(-75.5, 6.1), (-75.4, 6.1), (-75.4, 6.2), (-75.5, 6.1)]   # closed tree row, clockwise
+    one = [(-75.3, 6.3)] * 3                                          # a single tree, padded to 3
+    t = OverlayTile(6, -76, polygons=[ForestPolygon("a.for", ring, density=1, fill=FILL_LINE),
+                                      ForestPolygon("a.for", one, density=1, fill=FILL_POINTS)])
+    pts = [ln.split()[1:] for ln in t.lines() if ln.startswith("POLYGON_POINT")]
+    assert pts == [[f"{x:.9f}", f"{y:.9f}"] for x, y in ring + one]

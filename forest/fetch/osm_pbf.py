@@ -5,11 +5,12 @@ requested tile it touches, so memory stays low even for a whole country. A tile 
 filled from every downloaded extract that covers it (one pass per file, elements found in two
 files are written once); the files used are listed in the header ("sources").
 
-Writes cache/tiles/<tile>/osm.json in the same shape as Overpass `out geom`:
+Writes cache/tiles/<tile>/osm.json (since VERSION 8 coordinates are [lon, lat] pairs, not
+Overpass-style {"lat", "lon"} objects: ~40 % smaller and faster to read; same numbers):
 - nodes:     {"type": "node", "id", "tags", "lat", "lon"}            (natural=tree)
-- ways:      {"type": "way", "id", "tags", "geometry": [{"lat", "lon"}, ...]}
+- ways:      {"type": "way", "id", "tags", "geometry": [[lon, lat], ...]}
 - multipolygon relations:
-             {"type": "relation", "id", "tags", "members": [{"role": "outer", "geometry": [...]}]}
+             {"type": "relation", "id", "tags", "members": [{"role": "outer", "geometry": [[lon, lat], ...]}]}
 
 Kinds of features:
 - no-tree cut-outs: roads, buildings, water, aeroways, rail, power lines, bare land
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from pathlib import Path
 
@@ -34,7 +36,7 @@ from forest import config
 from forest.tiles import Tile
 
 PBF_DIR = config.CACHE_ROOT / "osm"
-VERSION = 7  # 5: mangroves (natural=wetland + wetland=mangrove); 6: every natural=wetland (swamps, marshes…); 7: bare land (construction, quarry, brownfield, sand, rock), car parks, landfills. Bump when the set of extracted features changes (old caches are re-extracted)
+VERSION = 8  # 8: [lon, lat] pairs (same features as 7; a 7 file is converted in place, see _upgrade_lean); 5: mangroves (natural=wetland + wetland=mangrove); 6: every natural=wetland (swamps, marshes…); 7: bare land (construction, quarry, brownfield, sand, rock), car parks, landfills. Bump when the set of extracted features changes (old caches are re-extracted)
 
 _WATERWAY = re.compile(r"^(river|riverbank|canal)$")
 _AEROWAY = re.compile(r"^(aerodrome|runway|taxiway|apron|helipad)$")
@@ -215,7 +217,7 @@ class _Handler(osmium.SimpleHandler):
         if not targets:
             return
         el = {"type": "way", "id": wy.id, "tags": dict(wy.tags),
-              "geometry": [{"lat": lat, "lon": lon} for lon, lat in xy.tolist()]}
+              "geometry": xy.tolist()}
         for w in targets:
             w.add(el)
 
@@ -227,7 +229,7 @@ class _Handler(osmium.SimpleHandler):
         if not targets:
             return
         el = {"type": "way", "id": wy.id, "tags": dict(wy.tags),
-              "geometry": [{"lat": lat, "lon": lon} for lon, lat in pts]}
+              "geometry": pts}
         for w in targets:
             w.add(el)
 
@@ -238,7 +240,7 @@ class _Handler(osmium.SimpleHandler):
         for ring in a.outer_rings():
             pts = [(n.lon, n.lat) for n in ring if n.location.valid()]
             if len(pts) >= 4:
-                members.append({"role": "outer", "geometry": [{"lat": la, "lon": lo} for lo, la in pts]})
+                members.append({"role": "outer", "geometry": pts})
                 pts_all += pts
         if not members:
             return
@@ -259,6 +261,40 @@ def header_sources(tile: Tile) -> list[str] | None:
     return json.loads(m.group(1)) if m else None
 
 
+LEAN_FROM = 8   # the first VERSION with [lon, lat] pairs
+
+
+def _lean(geom: list) -> list:
+    return [[p["lon"], p["lat"]] for p in geom if p]
+
+
+def _upgrade_lean(out: Path) -> bool:
+    """A version-7 osm.json (same features, {"lat", "lon"} points) → the current layout, in place.
+    Much faster than reading the country file again, and the file keeps its date, so built tiles
+    don't turn outdated over it and the Data view still shows when the data was read.
+    False when not possible (a later VERSION changed the features: the file must be read again)."""
+    if VERSION != LEAN_FROM:
+        return False
+    st = out.stat()
+    data = json.loads(out.read_text(encoding="utf-8"))
+    for el in data.get("elements", []):
+        if "geometry" in el:
+            el["geometry"] = _lean(el["geometry"])
+        for m in el.get("members", []):
+            if "geometry" in m:
+                m["geometry"] = _lean(m["geometry"])
+    part = out.with_suffix(".part")
+    with part.open("w", encoding="utf-8") as fh:   # the same text _TileWriter writes
+        src = data.get("sources")
+        fh.write(f'{{"version": {VERSION}, "sources": {json.dumps(src)}, "elements": [\n' if src
+                 else f'{{"version": {VERSION}, "elements": [\n')
+        fh.write(",\n".join(json.dumps(el, separators=(",", ":")) for el in data.get("elements", [])))
+        fh.write("\n]}\n")
+    os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+    part.replace(out)
+    return True
+
+
 def is_current(tile: Tile, sources: list[Path] | None = None) -> bool:
     """osm.json exists, has the current format and (when `sources` is given) was read from
     exactly these extract files."""
@@ -267,6 +303,8 @@ def is_current(tile: Tile, sources: list[Path] | None = None) -> bool:
         return False
     with out.open("r", encoding="utf-8") as fh:
         head = fh.read(64)
+    if f'"version": {LEAN_FROM - 1},' in head and _upgrade_lean(out):
+        return is_current(tile, sources)
     if f'"version": {VERSION}' not in head:
         return False
     if sources is None:

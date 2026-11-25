@@ -42,13 +42,27 @@ DEFAULTS = {
 }
 
 
+# Segments per quarter circle when growing building outlines by building_clearance_m. Buildings
+# are most of a city's geometry; 16 (shapely's default) made each corner a 17-point arc that
+# rasterising at ~9 m sub-cells can hardly tell from 4 (a 2 m clearance: the arcs are < 5 cm apart).
+BUILDING_QUAD_SEGS = 4
+
+
 def _deg(m: float, lat: float) -> float:
     # Longitude scale (the larger one) so buffers are never too thin.
     return m / (111_320.0 * math.cos(math.radians(lat)))
 
 
-def _coords(el: dict) -> list[tuple[float, float]]:
-    return [(p["lon"], p["lat"]) for p in el.get("geometry", []) if p]
+def _pts(geom: list) -> list:
+    """A way's or ring's points: osm.json VERSION 8+ stores [lon, lat] pairs (used as they are,
+    no copy); older files and hand-made test data have {"lat", "lon"} objects."""
+    if geom and isinstance(geom[0], dict):
+        return [(p["lon"], p["lat"]) for p in geom if p]
+    return geom
+
+
+def _coords(el: dict) -> list:
+    return _pts(el.get("geometry", []))
 
 
 def _relation_polys(el: dict) -> list[Polygon]:
@@ -56,7 +70,7 @@ def _relation_polys(el: dict) -> list[Polygon]:
     for m in el.get("members", []):
         if m.get("role") != "outer" or not m.get("geometry"):
             continue
-        pts = [(p["lon"], p["lat"]) for p in m["geometry"] if p]
+        pts = _pts(m["geometry"])
         if len(pts) >= 4 and pts[0] == pts[-1]:
             polys.append(Polygon(pts))
     return polys
@@ -69,25 +83,52 @@ def load_osm(osm_json: Path | dict) -> dict:
     return json.loads(Path(osm_json).read_text(encoding="utf-8"))
 
 
-class _ToBuffer:
-    """Geometries of one category, buffered in one shapely call per cap style instead of one
-    Python call each (~10 s for a city tile). Same GEOS operation and parameters, same order."""
+def _bulk(kind: str, pts_list: list) -> np.ndarray:
+    """Polygons (kind "P", closed rings) or lines ("L") from lists of (lon, lat), in one shapely
+    call instead of one Python object each: the same coordinates, so the same geometries as
+    Polygon(pts) / LineString(pts)."""
+    if not pts_list:
+        return np.empty(0, dtype=object)
+    lens = np.fromiter((len(p) for p in pts_list), dtype=np.int64, count=len(pts_list))
+    coords = np.fromiter(itertools.chain.from_iterable(itertools.chain.from_iterable(pts_list)),
+                         dtype=np.float64, count=2 * int(lens.sum())).reshape(-1, 2)
+    idx = np.repeat(np.arange(len(pts_list)), lens)
+    if kind == "L":
+        return shapely.linestrings(coords, indices=idx)
+    return shapely.polygons(shapely.linearrings(coords, indices=idx))
 
-    def __init__(self) -> None:
+
+class _ToBuffer:
+    """Geometries of one category, built and buffered in one shapely call per kind / cap style
+    instead of one Python call each (~10 s for a city tile). Same GEOS operations and parameters,
+    same order. A geometry is given either ready-made or as ("P" | "L", points) to build later."""
+
+    def __init__(self, quad_segs: int = 16) -> None:
         self.items: list[tuple] = []   # (geometry, distance or None = keep as is, cap style)
+        self.quad_segs = quad_segs
 
     def add(self, g, dist: float | None = None, cap: str = "round") -> None:
         self.items.append((g, dist, cap))
 
+    def poly(self, pts: list, dist: float | None = None, cap: str = "round") -> None:
+        self.items.append((("P", pts), dist, cap))
+
+    def line(self, pts: list, dist: float | None = None, cap: str = "round") -> None:
+        self.items.append((("L", pts), dist, cap))
+
     def result(self) -> list:
         out = [g for g, _, _ in self.items]
+        for kind in ("P", "L"):
+            idx = [i for i, g in enumerate(out) if type(g) is tuple and g[0] == kind]
+            for i, g in zip(idx, _bulk(kind, [out[i][1] for i in idx])):
+                out[i] = g
         for cap in ("round", "flat"):
             idx = [i for i, (_, dist, c) in enumerate(self.items) if dist is not None and c == cap]
             if idx:
-                geoms = np.array([self.items[i][0] for i in idx], dtype=object)
+                geoms = np.array([out[i] for i in idx], dtype=object)
                 dists = np.array([self.items[i][1] for i in idx], dtype=float)
-                # quad_segs=16 = Polygon.buffer()'s default (shapely.buffer()'s own is 8: coarser).
-                for i, g in zip(idx, shapely.buffer(geoms, dists, quad_segs=16, cap_style=cap)):
+                # quad_segs 16 = Polygon.buffer()'s default (shapely.buffer()'s own is 8: coarser).
+                for i, g in zip(idx, shapely.buffer(geoms, dists, quad_segs=self.quad_segs, cap_style=cap)):
                     out[i] = g
         return out
 
@@ -102,7 +143,7 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
     rwy = float(p["runway_clearance_m"])
     data = load_osm(osm_json)
     cats = ("roads", "buildings", "water", "runways", "airport_grounds", "corridors", "bare")
-    acc = {k: _ToBuffer() for k in cats}
+    acc = {k: _ToBuffer(BUILDING_QUAD_SEGS if k == "buildings" else 16) for k in cats}
 
     def building(poly: Polygon) -> None:
         acc["buildings"].add(poly, d(bld) if bld > 0 else None)
@@ -130,36 +171,37 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
         closed = len(pts) >= 4 and pts[0] == pts[-1]
         hw = tags.get("highway")
         aw = tags.get("aeroway")
+        # Ways are passed as points and built in bulk by _ToBuffer (same Polygon / LineString).
         if hw in ROAD_HALF_WIDTH:
             if road_k > 0:
-                acc["roads"].add(LineString(pts), d(ROAD_HALF_WIDTH[hw] * road_k), "flat")
+                acc["roads"].line(pts, d(ROAD_HALF_WIDTH[hw] * road_k), "flat")
         elif "building" in tags and closed:
-            building(Polygon(pts))
+            acc["buildings"].poly(pts, d(bld) if bld > 0 else None)
         elif tags.get("natural") == "water" or tags.get("landuse") == "reservoir" or tags.get("waterway") == "riverbank":
             if closed:
-                acc["water"].add(Polygon(pts))
+                acc["water"].poly(pts)
         elif tags.get("waterway") in ("river", "canal"):
-            acc["water"].add(LineString(pts), d(RIVER_HALF_WIDTH))
+            acc["water"].line(pts, d(RIVER_HALF_WIDTH))
         elif aw == "aerodrome" and closed:
-            acc["airport_grounds"].add(Polygon(pts))
+            acc["airport_grounds"].poly(pts)
         elif aw == "runway":
             # Centre line (usual) → strip of ±runway_clearance_m; area → grown so the
             # strip reaches about the same distance from the centre.
             if closed:
-                acc["runways"].add(Polygon(pts), d(max(rwy - 25, 5)))
+                acc["runways"].poly(pts, d(max(rwy - 25, 5)))
             else:
-                acc["runways"].add(LineString(pts), d(rwy), "flat")
+                acc["runways"].line(pts, d(rwy), "flat")
         elif aw in ("taxiway", "apron", "helipad"):
             if closed:
-                acc["runways"].add(Polygon(pts), d(APRON_MARGIN))
+                acc["runways"].poly(pts, d(APRON_MARGIN))
             else:
-                acc["runways"].add(LineString(pts), d(TAXIWAY_HALF_WIDTH))
+                acc["runways"].line(pts, d(TAXIWAY_HALF_WIDTH))
         elif tags.get("railway") == "rail":
-            acc["corridors"].add(LineString(pts), d(RAIL_HALF_WIDTH), "flat")
+            acc["corridors"].line(pts, d(RAIL_HALF_WIDTH), "flat")
         elif tags.get("power") == "line":
-            acc["corridors"].add(LineString(pts), d(POWER_HALF_WIDTH), "flat")
+            acc["corridors"].line(pts, d(POWER_HALF_WIDTH), "flat")
         elif closed and is_bare_area(tags):
-            acc["bare"].add(Polygon(pts))
+            acc["bare"].poly(pts)
     out = {k: acc[k].result() for k in cats}
     if not int(p["clear_airport_grounds"]):
         out["airport_grounds"] = []
@@ -194,26 +236,29 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
                             "residential": [], "no_town_trees": [], "scrub": [], "airports": [], "mangrove": [],
                             "swamp": [], "wetland": [], "leaf": []}
 
-    def areas(tags: dict, polys: list) -> None:
+    def area_key(tags: dict) -> str | None:
+        """Which list an area with these tags goes to (None = none)."""
         if tags.get("aeroway") == "aerodrome":   # airport grounds: never town trees or scrub
-            out["airports"] += [p for p in polys if p.is_valid]
-            return
+            return "airports"
         if is_mangrove_area(tags):
-            out["mangrove"] += [p for p in polys if p.is_valid]
-            return
+            return "mangrove"
         if is_wetland_area(tags):
             kind = tags.get("wetland", "")
-            if kind == "swamp":
-                out["swamp"] += [p for p in polys if p.is_valid]
-            elif kind in OPEN_WETLAND:
-                out["wetland"] += [p for p in polys if p.is_valid]
-            return
+            return "swamp" if kind == "swamp" else "wetland" if kind in OPEN_WETLAND else None
         lu = tags.get("landuse")
-        key = ("residential" if lu in TOWN_LANDUSE
-               else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE or is_parking_area(tags)
-               else "scrub" if is_scrub_area(tags) else None)
-        if key:
-            out[key] += [p for p in polys if p.is_valid]
+        return ("residential" if lu in TOWN_LANDUSE
+                else "no_town_trees" if lu in NO_TOWN_TREE_LANDUSE or is_parking_area(tags)
+                else "scrub" if is_scrub_area(tags) else None)
+
+    # Closed ways become polygons only when their tags put them in a list (most closed ways are
+    # buildings, which need none here). They're built and checked for validity in bulk at the
+    # end: the lists hold _Ring(i) placeholders until then, in the same order as before, and
+    # every way polygon is kept only if valid, as before.
+    rings: list = []
+
+    def ring(pts: list) -> _Ring:
+        rings.append(pts)
+        return _Ring(len(rings) - 1)
 
     for el in data.get("elements", []):
         tags = el.get("tags", {})
@@ -226,31 +271,58 @@ def osm_tree_hints(osm_json: Path | dict) -> dict[str, list]:
             if is_plantation(tags) or (tags.get("landuse") == "forest" and tags.get("leaf_type")):
                 out["plantations"] += [(p, tags) for p in polys if p.is_valid]
             if is_green_area(tags):
-                out["green"] += polys
+                out["green"] += polys      # relation green areas: no validity filter (as before)
                 if tags.get("leaf_type"):
                     out["leaf"] += [(p, tags["leaf_type"]) for p in polys if p.is_valid]
-            areas(tags, polys)
+            key = area_key(tags)
+            if key:
+                out[key] += [p for p in polys if p.is_valid]
             continue
         pts = _coords(el)
+        closed = len(pts) >= 4 and pts[0] == pts[-1]
+        r = None
         if (is_plantation(tags) or (tags.get("landuse") == "forest" and (tags.get("leaf_type") or tags.get("genus")))):
-            if len(pts) >= 4 and pts[0] == pts[-1]:
-                poly = Polygon(pts)
-                if poly.is_valid:
-                    out["plantations"].append((poly, tags))
+            if closed:
+                r = ring(pts)
+                out["plantations"].append((r, tags))
         if len(pts) < 2:
             continue
         if tags.get("natural") == "tree_row":
             out["rows"].append(LineString(pts))
-        elif len(pts) >= 4 and pts[0] == pts[-1]:
+        elif closed:
             if is_green_area(tags):
-                poly = Polygon(pts)
-                if poly.is_valid:
-                    out["green"].append(poly)
-                    if tags.get("leaf_type"):
-                        out["leaf"].append((poly, tags["leaf_type"]))
+                r = r or ring(pts)
+                out["green"].append(r)
+                if tags.get("leaf_type"):
+                    out["leaf"].append((r, tags["leaf_type"]))
             else:
-                areas(tags, [Polygon(pts)])
+                key = area_key(tags)
+                if key:
+                    out[key].append(r or ring(pts))
+    if rings:
+        polys = _bulk("P", rings)
+        valid = shapely.is_valid(polys)
+        for key, items in out.items():
+            if key in ("points", "rows"):
+                continue
+            res = []
+            for it in items:
+                g = it[0] if type(it) is tuple else it
+                if type(g) is _Ring:
+                    if not valid[g.i]:
+                        continue
+                    g = polys[g.i]
+                res.append((g, it[1]) if type(it) is tuple else g)
+            out[key] = res
     return out
+
+
+class _Ring:
+    """Placeholder for a way polygon that osm_tree_hints builds in bulk (index into its list)."""
+    __slots__ = ("i",)
+
+    def __init__(self, i: int) -> None:
+        self.i = i
 
 
 def _valid(geoms: list) -> list:
@@ -303,7 +375,18 @@ def _covered(geoms: list, grid, min_cover: float) -> np.ndarray:
     while batch := list(itertools.islice(shapes_, _RASTERIZE_BATCH)):
         rasterize(batch, out=hi, transform=tr)
     # count / s² >= min_cover  ⇔  count >= min_cover · s²  (s² is a power of 2: exact in float)
-    return hi.reshape(h, s, w, s).sum(axis=(1, 3), dtype=np.uint8) >= min_cover * s * s
+    return block_count(hi, s) >= min_cover * s * s
+
+
+def block_count(a: np.ndarray, k: int) -> np.ndarray:
+    """Sum of every k×k block of a 0/1 array (uint8, so k ≤ 15). The same numbers as
+    a.reshape(h, k, w, k).sum(axis=(1, 3)), from k² strided slices: ~5× faster at 12000²."""
+    out = a[0::k, 0::k].astype(np.uint8)
+    for i in range(k):
+        for j in range(k):
+            if i or j:
+                out += a[i::k, j::k]
+    return out
 
 
 def exclusion_mask(geoms: dict[str, list], grid, min_cover: float = 0.5) -> tuple[np.ndarray, dict[str, int]]:

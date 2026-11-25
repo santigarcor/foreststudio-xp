@@ -42,7 +42,7 @@ def fetch(tiles: list[str], region: str | None = None) -> int:
 
     from forest import history, regions
     from forest.fetch.elevation import fetch_elevation
-    from forest.fetch.osm import fetch_osm
+    from forest.fetch.osm import missing_message, usable_without_country_file
     from forest.fetch.osm_pbf import extract_tiles
     from forest.fetch.rasters import fetch_all
     from forest.resources import DOWNLOAD_WORKERS
@@ -97,8 +97,14 @@ def fetch(tiles: list[str], region: str | None = None) -> int:
                            peak_gb=round(peak, 2) if peak is not None else None)
         events.emit("osm_done", n=len(counts), seconds=secs, tiles=[t.name for t in with_pbf])
     for tile in tiles_:
-        if tile not in with_pbf:
-            fetch_osm(tile, region)   # no local file covers it: Overpass
+        if tile not in with_pbf:   # no downloaded country file covers it: say what to download
+            if usable_without_country_file(tile):
+                continue           # its OSM data is already here in the current format
+            msg = missing_message(tile, region)
+            events.log(msg)
+            events.emit("step", tile=tile.name, step="data", status="failed", note=msg[:200])
+            if tile.name not in failed:
+                failed.append(tile.name)
     if failed:
         events.log(f"data missing for: {', '.join(sorted(failed))}")
         return 3

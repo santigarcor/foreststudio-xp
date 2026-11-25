@@ -33,7 +33,7 @@ def _now() -> float:
 class JobRecord:
     def __init__(self, data: dict):
         self.d = data
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()   # re-entrant: full() reads summary + report under it
         self._log_fh = None   # the job's log, kept open while it runs (see log())
 
     # ---------- create / load ----------
@@ -162,10 +162,13 @@ class JobRecord:
                 if steps[s]["status"] in ("pending", "running"):
                     self.step(tile, s, "done")
         else:
-            failed = next((s for s in self.step_names if steps[s]["status"] == "running"),
-                          next((s for s in self.step_names if steps[s]["status"] == "pending"), self.step_names[-1]))
+            already = next((s for s in self.step_names if steps[s]["status"] == "failed"), None)
+            failed = already or next((s for s in self.step_names if steps[s]["status"] == "running"),
+                                     next((s for s in self.step_names if steps[s]["status"] == "pending"),
+                                          self.step_names[-1]))
             err = next((ln for ln in reversed(last_lines) if ln.strip()), f"exit code {rc}")
-            self.step(tile, failed, "failed", err.strip()[:300])
+            if not already:            # e.g. the Data step already failed with its own reason
+                self.step(tile, failed, "failed", err.strip()[:300])
             for s in self.step_names[self.step_names.index(failed) + 1:]:
                 self.step(tile, s, "skipped")
         with self.lock:
@@ -202,6 +205,10 @@ class JobRecord:
         return round(done / total, 3)
 
     def summary(self) -> dict:
+        with self.lock:            # build threads add results while the app reads them
+            return self._summary()
+
+    def _summary(self) -> dict:
         res = self.d["results"]
         ok = [r for r in res.values() if r.get("ok")]
         end = self.d["ended"] or _now()
@@ -215,6 +222,10 @@ class JobRecord:
 
     def report(self) -> dict:
         """Totals for the 'Final report' panel."""
+        with self.lock:
+            return self._report()
+
+    def _report(self) -> dict:
         res = self.d["results"]
         ok = [r for r in res.values() if r.get("ok")]
         per_step = {}
@@ -236,10 +247,13 @@ class JobRecord:
         }
 
     def full(self) -> dict:
-        return {**self.summary(), "steps": self.d["steps"], "results": self.d["results"],
-                "report": self.report(), "log_lines": self.d.get("log_lines", 0),
-                "error": self.d.get("error", ""), "step_names": self.step_names, "step_labels": STEP_LABELS,
-                "kind_label": KINDS.get(self.kind, self.kind)}
+        import copy
+        with self.lock:            # a copy: the window serialises it after the lock is released
+            return {**self._summary(), "steps": copy.deepcopy(self.d["steps"]),
+                    "results": copy.deepcopy(self.d["results"]), "report": self._report(),
+                    "log_lines": self.d.get("log_lines", 0), "error": self.d.get("error", ""),
+                    "step_names": self.step_names, "step_labels": STEP_LABELS,
+                    "kind_label": KINDS.get(self.kind, self.kind)}
 
 
 # ---------- module helpers ----------

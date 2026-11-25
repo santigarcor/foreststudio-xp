@@ -658,3 +658,39 @@ A standalone window like OrthoStudio-XP: **pywebview** (Edge WebView2) shows an 
   car parks 951 → 0, in water 218 → 5. The trees left on car parks / sand (304 / 251) are all
   OSM-mapped `natural=tree` points (real, kept). Landfills keep their forest (0.34 of 4.7 km²: the
   wooded buffers inside the outline). Sites cleared but not mapped in OSM still get trees.
+
+### 2026-11-24 — Pre-release review fixes, faster builds, leaner osm.json
+
+An outside review of the work so far (B1–B3, N1–N8, P1–P8) was agreed with the owner in steps.
+
+- **Step 1, fixes:**
+  - B1: Leaflet 1.9.4 ships in `forest/app/ui/vendor/leaflet` (BSD-2, SRI-checked), so the map works offline and without a CDN.
+  - B3: the Overpass fallback is gone. A tile no downloaded country file covers fails its Data step with "OpenStreetMap country file missing … Download it in Data → Regions". A tile that already has a current `osm.json` can still be built.
+  - N3: GDAL HTTP retries (4 × 5 s) in `fetch_window`. Sea-only tiles (no base-mesh DSF) are refused when the build starts.
+  - N5: one app window per data folder (`forest/app/single.py`, an OS lock on `<data>/app.lock`; a restart waits for it).
+  - N1: the RAM peak is the 90th percentile of the last 30 builds (`resources.RECENT_BUILDS`).
+  - N4: job views are read under the record's lock (deep copies).
+  - N6: the dev server only answers JSON POSTs (415 otherwise).
+  - N7: TOML strings are written with `config.toml_str`.
+  - README: keep the `-e` install.
+- **Step 2, same tiles, faster** (scratch rebuilds of +06-076, +10-076, +30-082 medium and +06-076 low, byte-identical DSF text and PNGs). Times 64.5/31.7/62.4/46.5 s → 49.8/20.6/48.3/33.7 s (−23…−35 %).
+  - P1: k×k block counts from strided slices (5× faster).
+  - P5: the low profile (4000 cells = WorldCover / 3) now takes the block path too, with a rounding table. GDAL's average equals round-half-up of 100·c/k² whenever no value ties at .5. Checked for k = 2, 3, 6; k = 4 ties and rounds either way, so k ∈ `_TIE_FREE` only. The high profile still reprojects, now from a cheaper 0/100 array. A 7-band reproject saved only ~1 s for ~1 GB more RAM, so it was not done.
+  - P6: `majority3` = 9 shifted views ≥ 5 with symmetric padding (13× faster than `median_filter`).
+  - P2: way geometries are built in bulk. Tree hints decide from tags before building a polygon (buildings no longer become polygons there) and check validity in bulk. The order and the filter places are unchanged: relation green areas still have no validity filter.
+  - P3: bulk `shape()` in `vectorize`.
+  - P4: one STRtree `within` query for OSM single trees.
+- **Step 3, changes tiles** (`BUILD_VERSION` 7, every tile shows as outdated):
+  - P7: `osm.json` VERSION 8 stores ways and rings as `[lon, lat]` pairs, 22–26 % smaller (+30-082: 282 → 211 MB), with the same numbers.
+    - A version-7 file is converted in place on its next check (1–8 s per tile) and keeps its date. The converted bytes equal a fresh read from the country file (checked on +10-076).
+    - Tiles built from it are byte-identical. gzip was left out for now (owner).
+  - P8: building clearance buffers use 4 segments per quarter circle instead of 16. With 2 m the arcs differ by < 5 cm.
+  - N2: point and line forests are written as they are, without `oriented()`. Closed tree rows keep their closing segment (87 rows on +06-076, 2 on +30-082). A lone tree's 3 padded points stay 3.
+  - Measured against the step-2 output:
+    - forest area unchanged (+30-082 +0.1 km² of 3,564);
+    - estimated trees +0.001 %; polygons ±5;
+    - building cut-out cells −0.1 to −0.3 % (−527 of 543,729 on +30-082);
+    - OSM single trees ±2.
+  - Town-tree counts are unchanged, but 35–45 % of the town trees sit at other random spots in the same town cells: a few candidate spots changed, so the seeded draw picks a different subset.
+  - Times vs the baseline: 43.7/18.4/40.5/27.8 s (−32…−42 %).
+- Not done: gzip of `osm.json` (later); B2 waits for the packaging work.

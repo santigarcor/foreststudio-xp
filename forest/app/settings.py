@@ -263,7 +263,9 @@ def validate_rules(data: dict, evergreen: set[str]) -> dict:
 
 
 def _q(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """A TOML string (a label with a newline or control character must not break the file)."""
+    from forest.config import toml_str
+    return toml_str(s)
 
 
 def write_rules(region: str, data: dict, evergreen: set[str]) -> Path:

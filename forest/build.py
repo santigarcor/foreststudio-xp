@@ -27,13 +27,13 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 from rasterio.enums import Resampling
 from rasterio.features import shapes
 from rasterio.windows import Window
-from shapely.geometry import Polygon, box, shape
+from shapely.geometry import Polygon, box
 from shapely.geometry.polygon import orient
 
 from forest import config
 from forest.assets.catalog import load_catalog
 from forest.dsf.text import FILL_LINE, FILL_POINTS, FILL_SOLID, ForestPolygon, OverlayTile, signed_area
-from forest.exclusions import coverage_mask, exclusion_mask, load_osm, osm_geometries, osm_tree_hints
+from forest.exclusions import block_count, coverage_mask, exclusion_mask, load_osm, osm_geometries, osm_tree_hints
 from forest.fetch import climate as clim
 from forest.fetch.elevation import elevation_on_grid
 from forest.fetch.osm import fetch_osm
@@ -144,33 +144,54 @@ def _step(tile: Tile, step: str, status: str) -> None:
 def _class_share(cls: np.ndarray, src, grid: Grid, classes: tuple[int, ...]) -> np.ndarray:
     """Share (0-1) of the source pixels in `classes` per grid cell."""
     k = _block_factor(src, grid)
+    hit = cls == classes[0]
+    for c in classes[1:]:
+        hit |= cls == c
     if k:
-        # The grid is the source pixel grid made k× coarser (WorldCover at 6000 cells: k = 2): the
-        # average of k×k pixels of 0/100 is 100·count/k², exact in uint8 for k = 1 or 2, so this
-        # gives the same values as GDAL's average resampling without a full reprojection.
-        h, w = grid.shape
-        hit = cls == classes[0]
-        for c in classes[1:]:
-            hit |= cls == c
-        count = hit.reshape(h, k, w, k).sum(axis=(1, 3), dtype=np.uint8)
-        return (count * np.uint8(100 // (k * k))).astype(np.float32) / 100.0
+        # The grid is the source pixel grid made k× coarser (WorldCover 12000 px: medium 6000
+        # cells k = 2, low 4000 k = 3). GDAL's average of k×k pixels of 0/100 is 100·count/k²
+        # rounded half up into uint8; _block_factor only allows k with no .5 ties, so float
+        # rounding inside GDAL can't flip a value and the table gives exactly GDAL's numbers.
+        table = np.floor(100.0 * np.arange(k * k + 1) / (k * k) + 0.5).astype(np.uint8)
+        return table[block_count(hit, k)].astype(np.float32) / 100.0
     from rasterio.warp import reproject
 
-    hit = np.where(np.isin(cls, classes), 100, 0).astype(np.uint8)  # percent, 1 byte/px
+    hit = hit.view(np.uint8) * np.uint8(100)  # percent, 1 byte/px (np.isin + where: 3× slower)
     out = np.zeros(grid.shape, dtype=np.uint8)
     reproject(hit, out, src_transform=src.transform, src_crs=src.crs,
               dst_transform=grid.transform, dst_crs="EPSG:4326", resampling=Resampling.average)
     return out.astype(np.float32) / 100.0
 
 
+def majority3(b: np.ndarray) -> np.ndarray:
+    """3×3 majority of a boolean grid: the same cells as scipy's
+    median_filter(b.astype(uint8), size=3) (≥ 5 of 9 set, edges mirrored like its default
+    mode "reflect" = numpy's "symmetric"), from 9 shifted views: ~13× faster at 6000²."""
+    p = np.pad(b.view(np.uint8), 1, mode="symmetric")
+    h, w = b.shape
+    s = p[0:h, 0:w].copy()
+    for i in range(3):
+        for j in range(3):
+            if i or j:
+                s += p[i:i + h, j:j + w]
+    return s >= 5
+
+
+# Block factors whose averages 100·c/k² (c = 0…k²) never end in exactly .5 (200·c/k² never odd).
+_TIE_FREE = frozenset(k for k in range(1, 16)
+                      if not any((200 * c) % (k * k) == 0 and (200 * c // (k * k)) % 2
+                                 for c in range(k * k + 1)))
+
+
 def _block_factor(src, grid: Grid) -> int | None:
-    """k when every grid cell is exactly k×k source pixels (k = 1 or 2), else None."""
+    """k when every grid cell is exactly k×k source pixels and no average 100·c/k² ends in .5
+    (k = 1, 2, 3, 5, 6, 7, 9…; not 4 or 8: GDAL's float sums round those ties either way), else None."""
     t = src.transform
     if not src.crs or src.crs.to_epsg() != 4326 or t.b or t.d or t.a <= 0 or t.e >= 0:
         return None
     k = round(grid.res / t.a)
     tol = t.a * 1e-3   # a thousandth of a pixel
-    if k not in (1, 2) or abs(t.a * k - grid.res) > 1e-12 or abs(t.e + t.a) > 1e-12:
+    if k < 1 or k > 15 or k not in _TIE_FREE or abs(t.a * k - grid.res) > 1e-12 or abs(t.e + t.a) > 1e-12:
         return None
     if abs(t.c - grid.tile.lon) > tol or abs(t.f - (grid.tile.lat + 1)) > tol:
         return None
@@ -324,7 +345,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
 
     elev = elevation_on_grid(tile, grid)
 
-    from scipy.ndimage import gaussian_filter, median_filter
+    from scipy.ndimage import gaussian_filter
 
     # Parks, gardens, golf courses and OSM woods: accept trees at a lower satellite share,
     # because 10 m land cover misses tree lines and scattered trees there.
@@ -333,7 +354,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     unsmoothed = raw
     # Majority filter: removes isolated cells and pinholes → far fewer tiny polygons.
     for _ in range(p.get("smooth_passes", 1)):
-        raw = median_filter(raw.astype(np.uint8), size=3).astype(bool)
+        raw = majority3(raw)
     raw |= unsmoothed & mangrove  # keep narrow mangrove fringes along shores
     trees = raw & ~excl  # cut-outs applied after smoothing so roads stay open
     density = np.clip(0.6 * frac + 0.4 * tc, 0.0, 1.0)
@@ -458,7 +479,7 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
         del wet_share, osm_wet
         scrub = scrub_share >= p["scrub_min_frac"]
         for _ in range(p.get("smooth_passes", 1)):
-            scrub = median_filter(scrub.astype(np.uint8), size=3).astype(bool)
+            scrub = majority3(scrub)
         has_scrub = np.array([bool(b.get("scrub")) for b in biomes])[biome_idx]
         scrub &= has_scrub & ~raw & ~planted & ~excl & ~mangrove & ~airport
         if scrub.any():
@@ -559,7 +580,6 @@ def climate_tree_at(c: dict, rows, cols, fallback):
 def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     """Single trees (X-Plane point forests) and tree rows (line forests) from OSM."""
     from shapely import STRtree
-    from shapely.geometry import Point
 
     p = s.profile
     grid: Grid = c["grid"]
@@ -569,12 +589,16 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     w0, s0, e0, n0 = grid.tile.bounds
     tile_box = box(w0, s0, e0, n0)
     blockers = [g for g in c["geoms"]["buildings"] + c["geoms"]["runways"] if g.is_valid]
-    tree_idx = STRtree(blockers) if blockers else None
 
-    def blocked(pt) -> bool:
-        if tree_idx is None:
-            return False
-        return any(blockers[i].contains(pt) for i in tree_idx.query(pt))
+    def blocked(pts: list) -> np.ndarray:
+        """Which (lon, lat) points lie inside a building or runway strip: one bulk tree query
+        (point within blocker ⇔ blocker contains point), not one Point and query each."""
+        out = np.zeros(len(pts), dtype=bool)
+        if blockers and pts:
+            xy = np.asarray(pts, dtype=np.float64)
+            hit = STRtree(blockers).query(shapely.points(xy[:, 0], xy[:, 1]), predicate="within")[0]
+            out[hit] = True
+        return out
 
     def in_forest(lon: float, lat: float) -> bool:
         r = int((n0 - lat) * grid.cells)
@@ -589,8 +613,9 @@ def osm_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     if int(p.get("osm_single_trees", 1)):
         step = 1.0 / p["chunks_per_degree"]
         groups: dict[tuple, list] = {}
-        kept = [(lon, lat) for lon, lat in c["hints"]["points"]
-                if w0 <= lon <= e0 and s0 <= lat <= n0 and not in_forest(lon, lat) and not blocked(Point(lon, lat))]
+        cand = [(lon, lat) for lon, lat in c["hints"]["points"]
+                if w0 <= lon <= e0 and s0 <= lat <= n0 and not in_forest(lon, lat)]
+        kept = [pt for pt, b in zip(cand, blocked(cand)) if not b]
         rc = [cell(lon, lat) for lon, lat in kept]
         names = climate_tree_at(c, [r for r, _ in rc], [col for _, col in rc], asset)
         for (lon, lat), name in zip(kept, names):
@@ -704,9 +729,10 @@ def vectorize(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
             if not sub.any():
                 continue
             tr = rasterio.windows.transform(win, grid.transform)
-            found = [(shape(geom), int(val)) for geom, val in shapes(sub, mask=sub > 0, transform=tr, connectivity=4)]
-            # One shapely call per chunk instead of one per shape (same GEOS operations).
-            geoms = shapely.simplify(np.array([g for g, _ in found], dtype=object), tol, preserve_topology=True)
+            found = list(shapes(sub, mask=sub > 0, transform=tr, connectivity=4))
+            # One shapely call per chunk instead of one per shape (same GEOS operations): the
+            # polygons are built from all rings at once (= shape(geom) each), then simplified.
+            geoms = shapely.simplify(_polygons_from_geojson([g for g, _ in found]), tol, preserve_topology=True)
             # Clip only what crosses the tile edge. Clipping a polygon that lies inside keeps
             # exactly its vertices but restarts its rings elsewhere (checked on +06-076); it
             # cost ~7 s per city tile for nothing.
@@ -725,7 +751,7 @@ def vectorize(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
                         keep = areas >= min_area_deg2 / 4
                         if not keep.all():
                             piece = Polygon(part.exterior, [h for h, k in zip(rings, keep) if k])
-                    v = val - 1
+                    v = int(val) - 1
                     for sub_poly in _split_for_dsf(piece):
                         sub_poly = orient(sub_poly, sign=1.0)
                         polys.append(ForestPolygon(
@@ -737,6 +763,22 @@ def vectorize(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     _log(f"vectorised {len(polys)} polygons", t0)
     _step(c["grid"].tile, "vectorise", "done")
     return polys
+
+
+def _polygons_from_geojson(geoms: list[dict]) -> np.ndarray:
+    """GeoJSON-like polygons (rasterio.features.shapes) → shapely polygons in bulk: the same
+    rings and coordinates as shape(g) for each, without one Python object per ring."""
+    import itertools
+
+    if not geoms:
+        return np.empty(0, dtype=object)
+    rings = [r for g in geoms for r in g["coordinates"]]
+    ring_poly = np.repeat(np.arange(len(geoms)), [len(g["coordinates"]) for g in geoms])
+    lens = np.fromiter((len(r) for r in rings), dtype=np.int64, count=len(rings))
+    coords = np.fromiter(itertools.chain.from_iterable(itertools.chain.from_iterable(rings)),
+                         dtype=np.float64, count=2 * int(lens.sum())).reshape(-1, 2)
+    lr = shapely.linearrings(coords, indices=np.repeat(np.arange(len(rings)), lens))
+    return shapely.polygons(lr, indices=ring_poly)
 
 
 # A DSF polygon holds at most 255 windings (outline + holes); stay safely below.
@@ -915,10 +957,12 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 6  # 2: scrub and town trees; 3: none of them inside airport grounds;
+BUILD_VERSION = 7  # 2: scrub and town trees; 3: none of them inside airport grounds;
 # 4: OSM mangroves, mangrove thickness from WorldCover only; 5: climate biomes: swamps, wetland bushes,
 # cloud forest, savanna trees, climate orchards / town trees, OSM leaf_type; 6: no trees on OSM bare
-# land (construction, quarry, brownfield, sand, rock), no town trees on car parks, landfills or water
+# land (construction, quarry, brownfield, sand, rock), no town trees on car parks, landfills or water;
+# 7: building clearance drawn with 4 segments per quarter circle (was 16); point and line forests
+# written in their own order (a closed tree row keeps its closing segment)
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json", clim.LEAF_FILE)
 
 

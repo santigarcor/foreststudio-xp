@@ -55,7 +55,9 @@ def fetch_window(url: str, tile: Tile, out: Path) -> Path:
     if out.exists():
         return out
     w, s, e, n = tile.bounds
-    with rasterio.Env(GDAL_HTTP_MULTIRANGE="YES", GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+    # Retries: one dropped request (network blip, server 5xx) must not fail the whole tile.
+    with rasterio.Env(GDAL_HTTP_MULTIRANGE="YES", GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+                      GDAL_HTTP_MAX_RETRY=4, GDAL_HTTP_RETRY_DELAY=5):
         with rasterio.open("/vsicurl/" + url) as src:
             win = from_bounds(w, s, e, n, src.transform).round_offsets().round_lengths()
             data = src.read(1, window=win)

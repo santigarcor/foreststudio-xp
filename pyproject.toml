@@ -30,7 +30,7 @@ foreststudio-xp = "forest.app.main:main"
 include = ["forest*"]
 
 [tool.setuptools.package-data]
-"forest.app" = ["ui/*", "icons/*"]
+"forest.app" = ["ui/*", "ui/vendor/leaflet/*", "ui/vendor/leaflet/images/*", "icons/*"]
 
 [tool.ruff]
 line-length = 120

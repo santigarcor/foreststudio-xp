@@ -55,6 +55,10 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -e .
 ```
 
+Keep the `-e` (editable install): the app reads its default settings and the bundled DSFTool
+from the downloaded folder. A plain `pip install .` copies only the program and starts without
+them. A packaged download is planned.
+
 Start the app:
 
 ```powershell

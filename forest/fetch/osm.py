@@ -1,138 +1,49 @@
-"""OpenStreetMap features per tile: cut-outs (roads, buildings, water, airports, rail, power)
-and tree hints (single trees, tree rows, woods, parks, plantations, town land use, scrub).
-
-Fallback only: the local Geofabrik .pbf (osm_pbf.py) is preferred. Fetched once per tile from
-the Overpass API (only the tile bbox is sent) and cached. Keep QUERY in step with
-osm_pbf.wanted_way / wanted_area_relation.
+"""OpenStreetMap features per tile come only from the downloaded Geofabrik country files
+(osm_pbf.py). There is no online fallback any more: the Overpass API stalled whole jobs (one
+degree is too heavy for it) and its query drifted from what osm_pbf extracts, so a tile built
+from it silently got different cut-outs. A tile no downloaded country file covers now fails
+with a message that says what to download.
 """
 
 from __future__ import annotations
 
-import json
-import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 from forest.tiles import Tile
 
-OVERPASS = "https://overpass-api.de/api/interpreter"
-USER_AGENT = "forest-studio/0.1 (X-Plane scenery generator)"
 
-QUERY = """
-[out:json][timeout:900][maxsize:1073741824];
-(
-  way["highway"]({s},{w},{n},{e});
-  way["building"]({s},{w},{n},{e});
-  relation["building"]({s},{w},{n},{e});
-  way["natural"="water"]({s},{w},{n},{e});
-  relation["natural"="water"]({s},{w},{n},{e});
-  way["waterway"~"^(river|riverbank|canal)$"]({s},{w},{n},{e});
-  way["landuse"="reservoir"]({s},{w},{n},{e});
-  way["aeroway"~"^(aerodrome|runway|taxiway|apron|helipad)$"]({s},{w},{n},{e});
-  relation["aeroway"="aerodrome"]({s},{w},{n},{e});
-  way["railway"="rail"]({s},{w},{n},{e});
-  way["power"="line"]({s},{w},{n},{e});
-  node["natural"="tree"]({s},{w},{n},{e});
-  way["natural"~"^(tree_row|wood|scrub|heath)$"]({s},{w},{n},{e});
-  relation["natural"~"^(wood|scrub|heath)$"]({s},{w},{n},{e});
-  way["natural"="wetland"]["wetland"="mangrove"]({s},{w},{n},{e});
-  relation["natural"="wetland"]["wetland"="mangrove"]({s},{w},{n},{e});
-  way["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
-  relation["landuse"~"^(forest|orchard|plantation|vineyard|residential|industrial|commercial|retail)$"]({s},{w},{n},{e});
-  way["landuse"="farmland"]["crop"]({s},{w},{n},{e});
-  way["landuse"="farmland"]["trees"]({s},{w},{n},{e});
-  way["landuse"="farmland"]["produce"]({s},{w},{n},{e});
-  relation["landuse"="farmland"]["crop"]({s},{w},{n},{e});
-  relation["landuse"="farmland"]["trees"]({s},{w},{n},{e});
-  relation["landuse"="farmland"]["produce"]({s},{w},{n},{e});
-  way["leisure"~"^(park|golf_course|garden|nature_reserve)$"]({s},{w},{n},{e});
-  relation["leisure"~"^(park|golf_course|garden|nature_reserve)$"]({s},{w},{n},{e});
-);
-out geom qt;
-"""
+class OsmFileMissing(RuntimeError):
+    """No downloaded OSM country file covers the tile."""
 
 
-def _fetch_adaptive(s: float, w: float, n: float, e: float, out: Path, depth: int = 0) -> list[Path]:
-    """Fetch a box; if the server keeps failing, split it into 4 and recurse (max 2 levels)."""
-    if out.exists():
-        return [out]
-    split_dir = out.with_suffix("")
-    if not split_dir.is_dir():  # not split on a previous run: try the whole box first
-        try:
-            _fetch_bbox(s, w, n, e, out, retries=2 if depth < 2 else 4)
-            return [out]
-        except RuntimeError:
-            if depth >= 2:
-                raise
-    split_dir.mkdir(exist_ok=True)
-    ms, mw = (s + n) / 2, (w + e) / 2
-    got: list[Path] = []
-    for k, (a, b, c, d) in enumerate([(s, w, ms, mw), (s, mw, ms, e), (ms, w, n, mw), (ms, mw, n, e)]):
-        got += _fetch_adaptive(a, b, c, d, split_dir / f"{k}.json", depth + 1)
-        time.sleep(2)
-    return got
+def missing_message(tile: Tile, region: str | None = None) -> str:
+    from forest import regions
+
+    files = [p.name for p in regions.osm_files(tile, region)]
+    if files:
+        return (f"{tile.name}: OpenStreetMap country file missing ({', '.join(files)}). "
+                "Download it in Data → Regions, then build again.")
+    return f"{tile.name}: no region's OpenStreetMap file covers this tile. Add its country in Data → Regions."
 
 
-def _fetch_bbox(s: float, w: float, n: float, e: float, out: Path, retries: int = 4) -> None:
-    if out.exists():
-        return
-    body = urllib.parse.urlencode({"data": QUERY.format(s=s, w=w, n=n, e=e)}).encode()
-    last: Exception | None = None
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(OVERPASS, data=body, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=1200) as resp:
-                data = resp.read()
-            json.loads(data)  # validate
-            tmp = out.with_suffix(".part")
-            tmp.write_bytes(data)
-            tmp.replace(out)
-            return
-        except Exception as exc:  # noqa: BLE001 - retry on any network/server error
-            last = exc
-            print(f"  overpass {out.name}: {exc}; retry in {30 * (attempt + 1)} s", flush=True)
-            time.sleep(30 * (attempt + 1))
-    raise RuntimeError(f"Overpass fetch failed for {out.name}: {last}")
+def usable_without_country_file(tile: Tile) -> bool:
+    """The tile's osm.json is in the current format, so it can be built even though no country
+    file is downloaded (e.g. deleted to save space). Old files without a version (the former
+    Overpass fallback) don't count."""
+    from forest.fetch.osm_pbf import is_current
+    return is_current(tile)
 
 
 def fetch_osm(tile: Tile, region: str | None = None) -> Path:
-    """Use the local Geofabrik extracts covering the tile when present (preferred), else Overpass."""
+    """The tile's osm.json, read from every downloaded country file covering it (re-read when
+    outdated), or the tile's existing current-format osm.json when no country file is downloaded.
+    Raises OsmFileMissing otherwise."""
     from forest import regions
     from forest.fetch.osm_pbf import extract_tile
 
     pbfs = regions.osm_sources(tile, region)   # every downloaded extract covering the tile
     if pbfs:
         return extract_tile(tile, pbfs)
-    return fetch_overpass(tile)
-
-
-def fetch_overpass(tile: Tile, splits: int = 4) -> Path:
-    """Fetch in splits×splits sub-boxes (one whole degree is too heavy for Overpass),
-    cache each piece, then merge into osm.json (deduplicated by element id)."""
-    out = tile.cache / "osm.json"
-    if out.exists():
-        return out
-    parts = tile.cache / "osm_parts"
-    parts.mkdir(exist_ok=True)
-    step = 1.0 / splits
-    seen: set[tuple[str, int]] = set()
-    elements: list[dict] = []
-    for i in range(splits):
-        for j in range(splits):
-            s = tile.lat + i * step
-            w = tile.lon + j * step
-            files = _fetch_adaptive(s, w, s + step, w + step, parts / f"{i}_{j}.json")
-            mb = sum(f.stat().st_size for f in files) / 1e6
-            print(f"  osm piece {i}_{j}: {len(files)} file(s), {mb:.1f} MB", flush=True)
-            for f in files:
-                for el in json.loads(f.read_text(encoding="utf-8")).get("elements", []):
-                    key = (el["type"], el["id"])
-                    if key not in seen:
-                        seen.add(key)
-                        elements.append(el)
-            time.sleep(2)  # be polite to the public server
-    tmp = out.with_suffix(".part")
-    tmp.write_text(json.dumps({"elements": elements}), encoding="utf-8")
-    tmp.replace(out)
-    return out
+    if usable_without_country_file(tile):
+        return tile.cache_path / "osm.json"
+    raise OsmFileMissing(missing_message(tile, region))

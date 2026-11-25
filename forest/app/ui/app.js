@@ -4,7 +4,8 @@
 
 const devApi = new Proxy({}, {
   get: (_, method) => (...args) =>
-    fetch("/api/" + method, { method: "POST", body: JSON.stringify(args) }).then(r => r.json()),
+    fetch("/api/" + method, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args) }).then(r => r.json()),
 });
 const api = () => (window.pywebview && window.pywebview.api) ? window.pywebview.api : devApi;
 const $ = (s) => document.querySelector(s);

@@ -8,6 +8,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 UI = APP_DIR / "ui" / "index.html"
 ICON = APP_DIR / "icons" / "foreststudio-xp.ico"
+RESTART_FLAG = "--restarted"   # Api.restart_app: wait for the old window's app lock
 
 
 def _set_windows_app_id() -> None:
@@ -28,6 +29,15 @@ def main() -> None:
     import webview
 
     multiprocessing.freeze_support()   # packaged (PyInstaller) builds: workers start here, not a window
+
+    from forest import config
+    from forest.app import single
+
+    # One window per data folder. A restart (after moving the data folder) waits for the old
+    # window to close.
+    if not single.acquire(config.DATA_ROOT, wait_s=20.0 if RESTART_FLAG in sys.argv else 0.0):
+        single.tell_already_open()
+        return
 
     from forest.app.api import Api
 

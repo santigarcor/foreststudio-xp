@@ -114,7 +114,8 @@ CLI (the same `forest/tasks.py` functions the app's workers run; handy for debug
 
 ```
 forest/
-  config.py        data-folder paths, local.toml load/save, X-Plane & DSFTool auto-detect + validation
+  config.py        data-folder paths, local.toml load/save, X-Plane & DSFTool auto-detect + validation;
+                   toml_str() = the only way to write a TOML string (json-escaped + DEL; also settings.py)
   migrate.py       one-time moves: old in-repo data → ~/.foreststudio; run_packs(): per-region
                    packs → the one pack (+ junction re-point)
   datafolder.py    Settings → Data folder: check / move / switch, re-point links, location.toml
@@ -131,17 +132,22 @@ forest/
     sources.py     country-wide files: Geofabrik .pbf + RESOLVE zip — download (.part → rename,
                    `<file>.json` meta: server date/size/downloaded), status, check_update (HEAD)
     rasters.py     ESA WorldCover 2021 (COG windows), Hansen GFC v1.12 treecover2000 + lossyear
+                   (GDAL HTTP retries: 4 × 5 s, so one network blip doesn't fail a tile)
     geofabrik.py   Geofabrik index-v1.json (cache/osm/geofabrik-index.json): tree of extracts,
                    tiles an extract's outline touches, region file text, sizes (HEAD)
     osm_pbf.py     ONE pass over the Geofabrik .pbf → streams elements into every requested tile's
-                   osm.json (format VERSION 6; old versions re-extracted automatically). Speed
+                   osm.json (format VERSION 8: ways/rings as [lon, lat] pairs, ~25 % smaller than
+                   7's {"lat","lon"} objects; a 7 file is converted in place keeping its date
+                   (`_upgrade_lean`), older versions re-extracted automatically). Speed
                    (2026-11-24, same output): osmium C++ filters (`PREFILTER_KEYS`: only tree
                    points and ways/relations/areas with a key we use reach Python — every key
                    wanted_way / wanted_area_relation read must be listed, a test checks) and way
                    coordinates via osmium's WKB factory + numpy, not one Python object per node
                    (`_way_slow` = the old per-node path, fallback). Colombia 5 tiles 146 → 62 s,
                    Florida 324 → 144 s. Tiles built from it are byte-identical (DSF text, PNGs)
-    osm.py         dispatch: local .pbf (preferred) else Overpass (fallback, unreliable)
+    osm.py         fetch_osm: the downloaded country file(s) only; no online fallback (Overpass was
+                   removed 2026-11-24). No file → the tile's current-VERSION osm.json if any, else
+                   OsmFileMissing ("Download it in Data → Regions"); that tile's Data step fails
     elevation.py   elevation from X-Plane's own base mesh via DSFTool (no download)
     ecoregions.py  RESOLVE Ecoregions 2017 → cache/ecoregions/<region>.geojson → per-tile raster
     climate.py     leaf type (Copernicus LC100 forest-type window → tile leaftype.tif) × Köppen climate
@@ -166,7 +172,12 @@ forest/
   worker.py        one task in one fresh process (spawn, pythonw on Windows), messages, stop
   cli.py           command line (thin wrapper over tasks)
   app/             pywebview desktop app: main.py, api.py (js_api), settings.py (schemas,
-                   validation, TOML writers), devserver.py (dev only), ui/{index.html,app.css,app.js,views.js}
+                   validation, TOML writers), devserver.py (dev only; POST needs a JSON Content-Type,
+                   so other web pages can't call it), single.py (one app window per data folder:
+                   OS lock on <data>/app.lock; a restart waits up to 20 s for it),
+                   ui/{index.html,app.css,app.js,views.js}, ui/vendor/leaflet (Leaflet 1.9.4,
+                   BSD-2, shipped so the map works without a CDN)
+                   api.start_build refuses sea-only tiles (no base-mesh DSF in X-Plane's Global Scenery)
 config/                             DEFAULTS shipped with the app (user copies live in ~/.foreststudio/config)
   regions/colombia.toml             the region: map tiles, OSM extract, ecoregion box, evergreen_only
   profiles/{low,medium,high}.toml   performance profiles
@@ -183,7 +194,8 @@ tests/                              pytest suite (sandboxed)
 2. **Classify** on a grid of `grid_cells` per degree (medium 6000 ≈ 18.5 m):
    - tree cell = WorldCover tree share ≥ `min_tree_frac` (≥ `osm_green_min_frac` inside OSM
      parks/gardens/golf/woods), minus Hansen loss from `recent_loss_from`;
-   - `smooth_passes` × 3×3 majority filter (mangrove cells exempt, so shore fringes survive);
+   - `smooth_passes` × 3×3 majority filter (`build.majority3`, = scipy median_filter; mangrove
+     cells exempt, so shore fringes survive);
    - cut-outs drawn at 2× detail, a cell cleared only if they cover ≥ `cutout_min_cover`; water is
      **not** cut in mangrove cells; **bare land** (OSM `landuse=construction|quarry|brownfield`,
      `natural=sand|bare_rock`; category `bare`) is a cut-out because the satellite maps (2021–2024)
@@ -300,7 +312,8 @@ Per-group phases are joined with " · " in `job_status.phase`; `osm_reading` / `
 `tiles`, so a note or "data done" only lands on that group's tiles. The pool of
 N `build` workers (N = Auto from `resources.auto_workers()`, measured peak ≈ 3.8 GB RAM for
 Medellín, 2.2 GB San Andrés since 2026-11-21 (was 5.3 / 4.3 GB); this PC 8 cores / 33 GB → Auto 3,
-rising as new builds replace the old peaks in `history.jsonl`; the peak includes DSFTool, measured
+the peak = 90th percentile of the last `resources.RECENT_BUILDS` (30) build peaks in `history.jsonl`,
+so old heavy builds age out; the peak includes DSFTool, measured
 since 2026-11-23: 0.27 GB on Medellín while the build holds 0.4 GB, so it never sets the limit). Logs tagged `[tile]`; a failed
 tile doesn't stop others; cancel terminates all. Every job is saved in `<data>/cache/jobs/<id>.{json,log}`
 with per-tile steps **Data → Classify → Vectorise → Compile** (advanced by `step` / `sat_tile` /
@@ -378,7 +391,7 @@ The OSM country file and the ecoregions zip are downloaded automatically on the 
 |---|---|---|
 | Land cover | ESA WorldCover 2021 v200, 10 m (AWS COG `…/ESA_WorldCover_10m_2021_v200_N06W078_Map.tif`, 3° tiles) | only the 1° window is read |
 | Tree cover / loss | Hansen GFC v1.12 (Google Storage, 10° tiles, strip-organised) | rows of the tile fetched |
-| OSM | Geofabrik `colombia-latest.osm.pbf` (~335 MB) in `<data>/cache/osm/` | ODbL; Overpass fallback timed out on whole tiles |
+| OSM | Geofabrik `colombia-latest.osm.pbf` (~335 MB) in `<data>/cache/osm/` | ODbL; required (the Overpass fallback timed out on whole tiles and was removed) |
 | Biomes | RESOLVE Ecoregions 2017 (`storage.googleapis.com/teow2016/Ecoregions2017.zip`, 149 MB, CC-BY 4.0) | clipped to `<data>/cache/ecoregions/colombia.geojson` |
 | Leaf type | Copernicus Global Land Cover 100 m 2019, forest-type layer (Zenodo 3939050, one 1 GB COG-like GeoTIFF, 256² blocks) | 1° window per tile ≈ 0.1–1 MB, ~6 s; only for climate biomes |
 | Climate | Köppen-Geiger 1 km 1991–2020 (Beck et al. 2023, figshare 21789074, CC-BY 4.0) | 131 MB zip once → only the 12 MB present-day map kept |
@@ -512,6 +525,12 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
   plus `ruff check forest tests` once (config in `pyproject.toml`).
 - Performance changes must not change tiles: rebuild a tile before/after in a scratch data folder
   (`FORESTSTUDIO_HOME`) and compare polygons (forest type, density, vertices), PNGs and stats.
+  `tests/test_speedups.py` pins each fast path to the code it replaced (2026-11-24, byte-identical
+  tiles, builds −23…−35 %): block counts by strided slices (`exclusions.block_count`; also the low
+  profile's k = 3 WorldCover shares, exact because 100·c/9 never ties — `build._TIE_FREE`),
+  `build.majority3`, way geometries built and validity-checked in bulk (`exclusions._bulk`,
+  `_Ring` placeholders keep the order), bulk `shape()` (`build._polygons_from_geojson`), one
+  STRtree query for OSM single trees.
 - UI check: `.claude/launch.json` → `forest-ui-dev` (dev server on :8765, or `PORT`); the real window was
   smoke-tested with pywebview `evaluate_js`.
 
@@ -519,7 +538,7 @@ frame limiter off: ~100 fps at 27M, 90–100 fps at 35M / 0.75, which the owner 
 
 - Keep the X-Plane pack folder clean (only `.dsf` + our `CREDITS.txt`, which the data licenses
   require; written on every compile and on Install pack); app files go to `<data>/out/studio/`.
-- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 7: bare land, car parks, landfills)
+- New per-tile data → `Tile.cache` (write) / `Tile.cache_path` (read). Bump `osm_pbf.VERSION` (now 8: [lon, lat] layout; 7: bare land, car parks, landfills)
   when extracted OSM features change.
 - Record measurements with `history.record(...)` so estimates stay accurate.
 - Large inline edits: prefer the Edit tool; Python patch scripts via heredoc break on Windows

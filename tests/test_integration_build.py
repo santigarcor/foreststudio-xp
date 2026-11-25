@@ -69,7 +69,8 @@ def _make_tile_data(sandbox):
         {"type": "way", "id": 11, "tags": {"natural": "water", "water": "basin"}, "geometry": sq(-75.02, 6.80, 0.01)},
         {"type": "way", "id": 12, "tags": {"landuse": "construction"}, "geometry": sq(-75.9, 6.7, 0.05)},
     ]
-    write_json(c / "osm.json", {"version": 3, "elements": els})
+    from forest.fetch.osm_pbf import VERSION  # the current format: built without a country file
+    write_json(c / "osm.json", {"version": VERSION, "elements": els})
 
 
 @pytest.fixture

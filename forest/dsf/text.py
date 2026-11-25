@@ -142,7 +142,12 @@ class OverlayTile:
             yield f"BEGIN_POLYGON {index[p.asset]} {p.density + p.fill} 2"
             for ring, ccw in [(p.exterior, True)] + [(h, False) for h in p.holes]:
                 yield "BEGIN_WINDING"
-                for lon, lat in oriented(ring, ccw):
+                # Winding order only matters for areas. Point forests (single and town trees) and
+                # line forests (tree rows) are written as they are: oriented() would reverse some
+                # and drop a last point equal to the first, i.e. the closing segment of a closed
+                # tree row around a field, or one of a single tree's 3 padded points.
+                pts = ring if p.fill in (FILL_POINTS, FILL_LINE) else oriented(ring, ccw)
+                for lon, lat in pts:
                     if not (w <= lon <= e and s <= lat <= n):
                         raise ValueError(f"point {lon},{lat} outside tile {self.name}")
                     yield f"POLYGON_POINT {lon:.9f} {lat:.9f}"

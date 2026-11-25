@@ -28,12 +28,17 @@ def system() -> dict:
     }
 
 
+RECENT_BUILDS = 30         # the peak comes from these: older builds (other code, other tiles) age out
+
+
 def peak_gb() -> float:
-    """Peak memory per build: 90th percentile of measured builds, else the default."""
+    """Peak memory per build: 90th percentile of the last RECENT_BUILDS measured builds, else the
+    default. Only recent builds count, so a high peak from older code doesn't keep Auto low forever."""
     from forest import history
 
-    vals = sorted(e["peak_gb"] for e in history.events()
-                  if e.get("kind") == "build" and isinstance(e.get("peak_gb"), (int, float)))
+    recent = [e["peak_gb"] for e in history.events()
+              if e.get("kind") == "build" and isinstance(e.get("peak_gb"), (int, float))][-RECENT_BUILDS:]
+    vals = sorted(recent)
     if not vals:
         return DEFAULT_PEAK_GB
     return max(1.0, vals[min(len(vals) - 1, math.floor(0.9 * len(vals)))])

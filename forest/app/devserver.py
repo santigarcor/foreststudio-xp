@@ -12,7 +12,7 @@ from pathlib import Path
 from forest.app.api import Api
 
 UI = Path(__file__).resolve().parent / "ui"
-API = Api()
+API = None   # the Api, made in main() (importing this module must not start the app)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -31,6 +31,11 @@ class Handler(SimpleHTTPRequestHandler):
         if name.startswith("_") or not callable(fn):
             self.send_error(404)
             return
+        # Only JSON requests: another web page can't send one without a CORS preflight (which this
+        # server never answers), so it can't call delete_tiles etc. while the dev server runs.
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+            self.send_error(415, "Content-Type must be application/json")
+            return
         args = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"[]")
         try:
             body = json.dumps(fn(*args)).encode()
@@ -46,6 +51,8 @@ class Handler(SimpleHTTPRequestHandler):
 def main() -> None:
     # PORT (set by preview tools that pick a free port) wins over the command-line default.
     port = int(os.environ.get("PORT") or (sys.argv[1] if len(sys.argv) > 1 else 8765))
+    global API
+    API = Api()
     print(f"Forest Studio dev UI on http://127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 

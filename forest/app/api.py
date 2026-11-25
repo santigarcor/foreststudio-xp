@@ -191,8 +191,10 @@ class Api:
         except Exception:  # noqa: BLE001 - dev server: no window to restart
             return {"ok": False, "error": "Restart the app to use the new folder."}
         from forest import proc as hidden
+        from forest.app.main import RESTART_FLAG
 
-        hidden.popen([sys.executable, "-m", "forest.app.main"], cwd=REPO_ROOT)  # pythonw: no console
+        # pythonw: no console. The new window waits for this one's app lock (forest/app/single.py).
+        hidden.popen([sys.executable, "-m", "forest.app.main", RESTART_FLAG], cwd=REPO_ROOT)
         win.destroy()
         return {"ok": True}
 
@@ -523,6 +525,14 @@ class Api:
         outside = [x for x in names if x not in own]
         if outside:
             return {"ok": False, "error": f"no region covers {', '.join(outside)}: add it in Data → Regions"}
+        # Sea-only tiles: X-Plane has no base-mesh tile there (no elevation, often no satellite map
+        # either), so the build could only fail with a cryptic download error.
+        gs = self.cfg.xplane_root / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"
+        if gs.is_dir():
+            sea = [x for x in names if not (gs / Tile.parse(x).folder / f"{x}.dsf").exists()]
+            if sea:
+                return {"ok": False, "error": f"{', '.join(sea)}: sea only (no land in X-Plane's scenery "
+                                              "there), nothing to build. Unselect it and try again."}
         info = self.parallel_info()
         n = int(workers) if workers and int(workers) > 0 else info["workers"]
         n = max(1, min(n, info["max"], len(names)))
@@ -892,6 +902,21 @@ class Api:
                 (j.done if rc == 0 else j.failed).append(name)
         j.add(f"=== {name}: {'ok' if rc == 0 else ('cancelled' if j.cancel else f'failed (exit {rc})')} ===")
 
+    def _data_failed(self, name: str) -> bool:
+        """The tile's data step failed (no country file, satellite download error): mark the
+        tile failed with that reason instead of starting a build that can only fail."""
+        j = self.job
+        st = j.record.d["steps"].get(name, {}).get("data", {}) if j.record is not None else {}
+        if st.get("status") != "failed":
+            return False
+        note = st.get("note") or "data download failed"
+        j.add(f"=== {name}: not built — {note} ===")
+        with j.lock:
+            j.queue = [n for n in j.queue if n != name]
+            j.failed.append(name)
+        j.record.tile_finished(name, 1, [note], None)
+        return True
+
     def _tile_result(self, name: str) -> dict:
         from forest.paths import dsf_path
         t = Tile.parse(name)
@@ -941,7 +966,10 @@ class Api:
                             j.add("some data is missing; those tiles will fail, the others are built")
                     self._set_phase(None, group=key)
                     if not j.cancel:
-                        builds.extend(pool.submit(build, n) for n in tiles)
+                        for n in tiles:
+                            if self._data_failed(n):     # nothing to build from: fail it now
+                                continue
+                            builds.append(pool.submit(build, n))
                 except Exception as exc:  # noqa: BLE001 - nobody reads this future: fail its tiles
                     j.add(f"ERROR in the data step: {type(exc).__name__}: {exc}")
                     with j.lock:

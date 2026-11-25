@@ -27,3 +27,11 @@ def sleep(seconds: float = 60) -> int:
     events.log("sleeping")
     time.sleep(seconds)
     return 0
+
+
+def try_app_lock(root: str) -> int:
+    """0 = this (second) process got the data folder's app lock, 1 = another window holds it."""
+    from pathlib import Path
+
+    from forest.app import single
+    return 0 if single.acquire(Path(root)) else 1

@@ -162,6 +162,8 @@ def change(folder: str) -> dict:
         for item in sorted(cur.iterdir()) if cur.exists() else []:
             if item.resolve() == config.LOCATION_FILE.resolve():
                 continue                      # the pointer stays in the default folder
+            if item.name == "app.lock":
+                continue                      # this window's lock (forest/app/single.py): held open
             move_merge(item, target / item.name, notes)
         notes.insert(0, f"moved {c['size_gb']} GB to {target}")
         if cur != config.DEFAULT_DATA_ROOT:
