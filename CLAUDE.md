@@ -198,6 +198,11 @@ tests/                              pytest suite (sandboxed)
      parks/gardens/golf/woods), minus Hansen loss from `recent_loss_from`;
    - `smooth_passes` × 3×3 majority filter (`build.majority3`, = scipy median_filter; mangrove
      cells exempt, so shore fringes survive);
+   - runway clear strip = centre line ± `runway_clearance_m`, stopping at the runway ends;
+     **town trees only** also stay off `runway_ends` = that strip continued `exclusions.RUNWAY_END_M`
+     (300 m: ICAO strip end + RESA, approach lights; owner 2026-11-25) past each end (BUILD_VERSION 8; SKRG had town
+     trees 220 m past the 01 threshold, outside the OSM aerodrome outline). Not a cut-out: real
+     forest past a runway end is kept (owner, 2026-11-25);
    - cut-outs drawn at 2× detail, a cell cleared only if they cover ≥ `cutout_min_cover`; water is
      **not** cut in mangrove cells; **bare land** (OSM `landuse=construction|quarry|brownfield`,
      `natural=sand|bare_rock`; category `bare`) is a cut-out because the satellite maps (2021–2024)

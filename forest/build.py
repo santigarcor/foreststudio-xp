@@ -332,7 +332,9 @@ def classify(tile: Tile, s: Settings, t0: float) -> dict:
     _log(f"rasters on grid (mangrove cells: {int(mangrove.sum()):,}, "
          f"OSM mangroves: {len(hints['mangrove'])} areas)", t0)
     min_cover = p.get("cutout_min_cover", 0.5)
-    excl, excl_stats = exclusion_mask({k: v for k, v in geoms.items() if k != "water"}, grid, min_cover)
+    # Not cut-outs: water (handled below) and runway_ends (only keeps town trees off).
+    excl, excl_stats = exclusion_mask({k: v for k, v in geoms.items() if k not in ("water", "runway_ends")},
+                                      grid, min_cover)
     water = coverage_mask(geoms["water"], grid, min_cover)
     excl |= water & ~mangrove  # mangroves stand in water: OSM lagoons/ciénagas must not remove them
     excl_stats["water"] = int(water.sum())
@@ -676,7 +678,8 @@ def town_trees(c: dict, s: Settings, t0: float) -> list[ForestPolygon]:
     lat = n0 - (rows + rng.random(rows.size)) * d
     g = c["geoms"]
     # Exact spots, not cells: a cell half covered by a car park or pond is still town.
-    blockers = [x for k in ("buildings", "roads", "runways", "corridors", "water", "bare") for x in g.get(k, [])
+    blockers = [x for k in ("buildings", "roads", "runways", "runway_ends", "corridors", "water", "bare")
+                for x in g.get(k, [])
                 if x is not None and x.is_valid and not x.is_empty]
     blockers += [x for k in ("airports", "no_town_trees") for x in c["hints"].get(k, []) if not x.is_empty]
     keep = np.ones(lon.size, dtype=bool)
@@ -957,12 +960,13 @@ def overlay(c: dict, out: Path, size: int = 2400, osm_polys: list[ForestPolygon]
 
 # Bump when a change to the build itself (not the settings) changes the result, so every tile
 # built before shows up as outdated.
-BUILD_VERSION = 7  # 2: scrub and town trees; 3: none of them inside airport grounds;
+BUILD_VERSION = 8  # 2: scrub and town trees; 3: none of them inside airport grounds;
 # 4: OSM mangroves, mangrove thickness from WorldCover only; 5: climate biomes: swamps, wetland bushes,
 # cloud forest, savanna trees, climate orchards / town trees, OSM leaf_type; 6: no trees on OSM bare
 # land (construction, quarry, brownfield, sand, rock), no town trees on car parks, landfills or water;
 # 7: building clearance drawn with 4 segments per quarter circle (was 16); point and line forests
-# written in their own order (a closed tree row keeps its closing segment)
+# written in their own order (a closed tree row keeps its closing segment); 8: runway clear strip
+# town trees stay off 300 m past each runway end (runway end safety area, approach lights)
 DATA_FILES = ("worldcover.tif", "treecover2000.tif", "lossyear.tif", "osm.json", clim.LEAF_FILE)
 
 

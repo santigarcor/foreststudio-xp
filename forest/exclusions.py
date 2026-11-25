@@ -31,6 +31,11 @@ POWER_HALF_WIDTH = 10   # cleared corridors under power lines
 RIVER_HALF_WIDTH = 12
 TAXIWAY_HALF_WIDTH = 20
 APRON_MARGIN = 5
+# No town trees this far past each end of a runway's centre line: ICAO's strip end (60 m) + runway
+# end safety area (240 m), where the approach lights stand. SKRG had town trees 222-252 m past the
+# runway 01 end, just outside the airport fence. Only town trees (which we invent): real forest the
+# satellite sees and OSM-mapped trees past a runway end are kept ("runway_ends" is not a cut-out).
+RUNWAY_END_M = 300
 SUPERSAMPLE = 2
 
 DEFAULTS = {
@@ -51,6 +56,24 @@ BUILDING_QUAD_SEGS = 4
 def _deg(m: float, lat: float) -> float:
     # Longitude scale (the larger one) so buffers are never too thin.
     return m / (111_320.0 * math.cos(math.radians(lat)))
+
+
+def extend_ends(pts: list, m: float, lat: float) -> list:
+    """The line (lon, lat) points lengthened by `m` metres at both ends, along its end segments."""
+    if m <= 0 or len(pts) < 2:
+        return list(pts)
+    kx = 111_320.0 * math.cos(math.radians(lat))
+    ky = 110_574.0
+
+    def beyond(a, b):  # the point m metres past b, coming from a
+        dx, dy = (b[0] - a[0]) * kx, (b[1] - a[1]) * ky
+        n = math.hypot(dx, dy)
+        if n == 0:
+            return None
+        return (b[0] + dx / n * m / kx, b[1] + dy / n * m / ky)
+
+    start, end = beyond(pts[1], pts[0]), beyond(pts[-2], pts[-1])
+    return ([start] if start else []) + list(pts) + ([end] if end else [])
 
 
 def _pts(geom: list) -> list:
@@ -142,7 +165,7 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
     bld = float(p["building_clearance_m"])
     rwy = float(p["runway_clearance_m"])
     data = load_osm(osm_json)
-    cats = ("roads", "buildings", "water", "runways", "airport_grounds", "corridors", "bare")
+    cats = ("roads", "buildings", "water", "runways", "runway_ends", "airport_grounds", "corridors", "bare")
     acc = {k: _ToBuffer(BUILDING_QUAD_SEGS if k == "buildings" else 16) for k in cats}
 
     def building(poly: Polygon) -> None:
@@ -191,6 +214,8 @@ def osm_geometries(osm_json: Path | dict, lat_mid: float, profile: dict | None =
                 acc["runways"].poly(pts, d(max(rwy - 25, 5)))
             else:
                 acc["runways"].line(pts, d(rwy), "flat")
+                if rwy > 0:
+                    acc["runway_ends"].line(extend_ends(pts, RUNWAY_END_M, lat_mid), d(rwy), "flat")
         elif aw in ("taxiway", "apron", "helipad"):
             if closed:
                 acc["runways"].poly(pts, d(APRON_MARGIN))

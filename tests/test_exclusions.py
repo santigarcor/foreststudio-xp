@@ -65,6 +65,41 @@ def test_runway_strip_half_width(tmp_path):
     assert width_deg == pytest_approx(150 * deg_per_m, 0.01)
 
 
+def test_runway_ends_zone_goes_past_the_thresholds(tmp_path):
+    """The town-tree-free zone runs RUNWAY_END_M past both ends (SKRG: town trees 220 m past rwy 01);
+    the cut-out strip itself stops at the ends, so real forest there is kept."""
+    from forest.exclusions import RUNWAY_END_M
+    els = [way(1, {"aeroway": "runway"}, [(-75.42, 6.10), (-75.42, 6.20)])]
+    g = osm_geometries(osm_file(tmp_path, els), LAT, {"runway_clearance_m": 75})
+    past = RUNWAY_END_M / 110_574
+    ends = g["runway_ends"][0]
+    assert ends.bounds[1] == pytest_approx(6.10 - past, 1e-6)
+    assert ends.bounds[3] == pytest_approx(6.20 + past, 1e-6)
+    assert g["runways"][0].bounds[1] == pytest_approx(6.10, 1e-9)
+    assert g["runways"][0].bounds[3] == pytest_approx(6.20, 1e-9)
+    assert osm_geometries(osm_file(tmp_path, els), LAT, {"runway_clearance_m": 0})["runway_ends"] == []
+
+
+def test_town_trees_stay_off_runway_ends(tmp_path):
+    """A town just past a runway end gets no town trees inside the runway_ends zone."""
+    import numpy as np
+    import shapely
+
+    from forest.build import Settings, town_trees
+    els = [way(1, {"aeroway": "runway"}, [(-75.95, 6.95), (-75.95, 6.99)])]  # ends at 6.95
+    geoms = osm_geometries(osm_file(tmp_path, els), LAT, {"runway_clearance_m": 75})
+    grid = Grid(Tile(6, -76), 600)
+    town = np.zeros(grid.shape, dtype=bool)
+    town[30:36, 25:36] = True        # lat 6.95 … 6.94, lon -75.958 … -75.94: 0–1.1 km past the end
+    c = {"grid": grid, "town": town, "geoms": geoms, "hints": {}, "biomes": [{"name": "b"}],
+         "biome_idx": np.zeros(grid.shape, dtype=np.int16)}
+    s = Settings(profile={"town_trees_per_km2": 2000, "chunks_per_degree": 4}, rules={"town_tree": "t.for"})
+    pts = [pt for p in town_trees(c, s, 0.0) for pt in p.exterior]
+    assert pts
+    inside = shapely.contains_xy(geoms["runway_ends"][0], [x for x, *_ in pts], [y for _, y, *_ in pts])
+    assert not inside.any()
+
+
 def test_cutouts_need_real_coverage_not_a_touch():
     """A small building touching a cell must not clear it; a big one covering it must."""
     from shapely.geometry import box

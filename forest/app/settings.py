@@ -48,7 +48,8 @@ PROFILE_SCHEMA: dict[str, tuple] = {
                          "fewer city trees); higher = keeps more trees between buildings."),
     "runway_clearance_m": (int, 0, 200, 5, "Clearances", "Runway clear strip (m)",
                            "Trees are kept this far from a runway's centre line (each side). "
-                           "Taxiways and aprons get a ~20 m margin. 75 m ≈ an ICAO runway strip."),
+                           "Town trees are also kept off 300 m past each runway end (real forest "
+                           "there stays). Taxiways and aprons get a ~20 m margin. 75 m ≈ an ICAO runway strip."),
     "clear_airport_grounds": (int, 0, 1, 1, "Clearances", "Clear whole airport grounds (0/1)",
                               "1 = no trees anywhere inside the airport boundary from OpenStreetMap. "
                               "0 = keep real trees on the grounds (only runways, taxiways and aprons "
