@@ -65,7 +65,7 @@ a **draft** release with those notes, builds the installers on windows-latest, m
 macos-15-intel and ubuntu-22.04 (`tools/package/build.py --check`, each uploads
 `<artifact>` + `<artifact>.sha256`), merges the checksums into `SHA256SUMS.txt` and publishes the
 release; if any build fails it stays a draft. Manual runs (workflow_dispatch) only make workflow
-artifacts (7 days). Dependencies change → `uv lock` (CI checks `uv lock --check`).
+artifacts (7 days), and so do pull requests touching `tools/package`, the workflows, `uv.lock` or `pyproject.toml`. Dependencies change → `uv lock` (CI checks `uv lock --check`).
 
 **Packaging** (`tools/package/`, 2026-11-25; no PyInstaller): a python-build-standalone CPython
 (`build.PYTHON`, fetched by uv) + the `uv.lock` runtime deps (wheels only, except the tiny
