@@ -135,6 +135,15 @@ def ensure_climate() -> None:
         events.log(f"climate map download FAILED: {exc}")
 
 
+def list_osm_tiles(pbf, url: str) -> None:
+    """After an OSM download: which tiles the file covers (the map enables only those)."""
+    from forest.fetch import osm_tiles
+    try:
+        osm_tiles.write(pbf, url)
+    except (OSError, ValueError) as exc:   # tried again on the next start
+        events.log(f"could not list the tiles {pbf.name} covers ({exc})")
+
+
 def ensure_country_files(region: str) -> None:
     """First use: download the OSM country file and the ecoregions map if they're missing."""
     from forest.fetch import sources
@@ -147,6 +156,8 @@ def ensure_country_files(region: str) -> None:
             sources.download(url, pbf, sources.print_progress("OSM"))
         except OSError as exc:
             events.log(f"OSM country file download FAILED: {exc}")
+    if pbf.exists() and osm_tiles_missing(pbf):
+        list_osm_tiles(pbf, url)
     zp = sources.ecoregions_zip()
     if not clipped_path(region).exists() and not zp.exists():
         events.emit("downloading", what="ecoregions", name="the biome map (Ecoregions 2017)",
@@ -200,7 +211,15 @@ def data_osm(region: str, update: bool = False, force: bool = False) -> int:
                 return 0
         events.emit("downloading", what="OSM", name=f"the OpenStreetMap file {pbf.name}", url=url)
         sources.download(url, pbf, sources.print_progress("OSM"))
+        list_osm_tiles(pbf, url)          # a newer file may cover other tiles
+    elif osm_tiles_missing(pbf):
+        list_osm_tiles(pbf, url)
     return reextract(region)
+
+
+def osm_tiles_missing(pbf) -> bool:
+    from forest.fetch import osm_tiles
+    return osm_tiles.read(pbf) is None
 
 
 def reextract(region_name: str) -> int:

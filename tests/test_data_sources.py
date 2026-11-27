@@ -82,7 +82,7 @@ def test_data_status_lists_tiles_and_stale_osm(sandbox):
     api = pytest.importorskip("forest.app.api")
     from forest.fetch import osm_pbf
     pbf = osm_pbf.PBF_DIR / "colombia-latest.osm.pbf"
-    pbf.parent.mkdir(parents=True)
+    pbf.parent.mkdir(parents=True, exist_ok=True)
     pbf.write_bytes(b"pbf")
     (pbf.with_name(pbf.name + ".json")).write_text(json.dumps({"remote_date": 2_000_000_000, "downloaded": 2_000_000_000}))
     d = sandbox.cache / "tiles" / "+06-076"

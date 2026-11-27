@@ -76,6 +76,12 @@ def sandbox(tmp_path, monkeypatch):
     except Exception:  # noqa: BLE001 - api imports pywebview-free modules only; keep tests running
         pass
     config.save(xp, dsftool, proj / "config" / "local.toml")
+    # Colombia's OSM tile list (written on download in real use): every Colombia tile is buildable
+    # from its osm.json without a country file. Tests about coverage delete or replace it.
+    from forest import regions
+    from forest.fetch import osm_tiles
+    col = regions.get("colombia")
+    osm_tiles.write_tiles(col.osm_file, {t.name: 1.0 for t in col.tiles()}, "test")
 
     class NS:
         pass

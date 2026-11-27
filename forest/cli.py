@@ -85,8 +85,8 @@ def _run(cmd: list[str], measured: dict | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     from forest import migrate
-
-    for note in migrate.run() + migrate.run_packs():   # one-time moves (old layouts)
+    from forest.fetch import osm_tiles
+    for note in migrate.run() + migrate.run_packs() + osm_tiles.ensure_all():   # old layouts / OSM tile lists
         print(f"[migrate] {note}", flush=True)
     p = argparse.ArgumentParser(prog="forest")
     sub = p.add_subparsers(required=True)

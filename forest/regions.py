@@ -175,8 +175,8 @@ def remove(name: str) -> list[str]:
     gone = []
     others = [get(n) for n in names() if n != name]
     if not any(o.osm_file == r.osm_file for o in others):
-        from forest.fetch import sources
-        for p in (r.osm_file, sources._meta_path(r.osm_file)):
+        from forest.fetch import osm_tiles, sources
+        for p in (r.osm_file, sources._meta_path(r.osm_file), osm_tiles.db_path(r.osm_file)):
             if p.exists():
                 p.unlink()
                 gone.append(p.name)
@@ -192,18 +192,28 @@ def remove(name: str) -> list[str]:
 
 
 def _covers(r: Region, tile: Tile) -> bool:
-    """Does the region's OSM extract cover the tile? Geofabrik's outline when its list is
-    downloaded and knows the file, else the region's own tiles."""
-    from forest.fetch import geofabrik
+    """Does the region's OSM extract cover the tile? The file's tile list (osm_tiles, written on
+    download) when there is one, else Geofabrik's outline from its index, else the region's tiles."""
+    return tile.name in _extract_tiles(r)
 
+
+def _extract_tiles(r: Region) -> dict[str, float]:
+    """Tiles the region's extract covers → share: its tile list, else the index, else every
+    region tile at 1 (no outline known)."""
+    from forest.fetch import geofabrik, osm_tiles
+
+    db = osm_tiles.read(r.osm_file)
+    if db is not None:
+        return db
     e = geofabrik.by_file_name().get(r.osm_file.name)
-    return tile.name in geofabrik.tiles_of(e["id"]) if e else r.contains(tile)
+    return geofabrik.tile_shares(e["id"]) if e else {t.name: 1.0 for t in r.tiles()}
 
 
 def osm_files(tile: Tile, region: str | None = None, downloaded_only: bool = False) -> list[Path]:
     """Every region's OSM extract that covers the tile (a tile on a border needs both countries'
-    files), plus the given region's own file (default: the tile's owner). Sorted by file name."""
-    region = region or owner(tile)
+    files). Sorted by file name. A region's own file is NOT added for a tile its extract doesn't
+    cover: Colombia's box reaches into Panama, and those tiles got an empty osm.json (no runways,
+    roads or buildings: trees all over MPTO). `region` is kept for callers; it no longer matters."""
     out: dict[str, Path] = {}
     for n in names():
         try:
@@ -213,9 +223,52 @@ def osm_files(tile: Tile, region: str | None = None, downloaded_only: bool = Fal
         f = r.osm_file
         if downloaded_only and not f.exists():
             continue
-        if f.name not in out and (n == region or _covers(r, tile)):
+        if f.name not in out and _covers(r, tile):
             out[f.name] = f
     return [out[k] for k in sorted(out)]
+
+
+def osm_covered(tile: Tile) -> bool:
+    """Is the tile in a downloaded OSM file's tile list (so it can be built)?"""
+    return tile.name in covered_tiles()
+
+
+@lru_cache(maxsize=4)
+def _covered(key: tuple) -> frozenset[str]:
+    from forest.fetch import osm_tiles
+
+    out: set[str] = set()
+    for n in names():
+        try:
+            r = get(n)
+        except ValueError:
+            continue
+        if osm_tiles.read(r.osm_file) is not None or r.osm_file.exists():
+            out |= set(_extract_tiles(r))
+    return frozenset(out)
+
+
+def covered_tiles() -> frozenset[str]:
+    """Every tile the map enables: those in a downloaded OSM file's tile list (osm_tiles; the list
+    stays when the .pbf is deleted to save space). A file downloaded but not listed yet (offline on
+    start, no index) falls back to the index outline / region tiles. A region whose file isn't
+    downloaded enables nothing yet: download it in Data → Regions."""
+    return _covered(_owners_key())
+
+
+def waiting_for_download(tile: Tile) -> list[str]:
+    """Names of the regions that offer the tile but whose OSM file isn't downloaded yet."""
+    from forest.fetch import osm_tiles
+
+    out = []
+    for n in names():
+        try:
+            r = get(n)
+        except ValueError:
+            continue
+        if r.contains(tile) and not r.osm_file.exists() and osm_tiles.read(r.osm_file) is None:
+            out.append(r.name)
+    return out
 
 
 def osm_sources(tile: Tile, region: str | None = None) -> list[Path]:
@@ -247,13 +300,14 @@ def osm_groups(tiles: list[str], owners: dict[str, str]) -> list[list[str]]:
     return list(groups.values())
 
 
-def _share(r: Region, tile: Tile) -> float:
-    """How much of the tile the region's extract covers: Geofabrik's outline when its list knows
-    the file, else 1 for every tile of the region."""
-    from forest.fetch import geofabrik
+def _outline_known(r: Region) -> bool:
+    from forest.fetch import geofabrik, osm_tiles
+    return osm_tiles.read(r.osm_file) is not None or r.osm_file.name in geofabrik.by_file_name()
 
-    e = geofabrik.by_file_name().get(r.osm_file.name)
-    return geofabrik.tile_shares(e["id"]).get(tile.name, 0.0) if e else 1.0
+
+def _share(r: Region, tile: Tile) -> float:
+    """How much of the tile the region's extract covers (see _extract_tiles)."""
+    return _extract_tiles(r).get(tile.name, 0.0)
 
 
 @lru_cache(maxsize=4)
@@ -274,7 +328,9 @@ def _owners(key: tuple) -> dict[str, str]:
             out[name] = cands[0].name
         else:
             t = Tile.parse(name)
-            out[name] = max(cands, key=lambda r: (_share(r, t), r.name == default_name(), -names().index(r.name))).name
+            # A known outline (tile list / index) beats a guessed one (the region's box at 1).
+            out[name] = max(cands, key=lambda r: (_outline_known(r), _share(r, t), r.name == default_name(),
+                                                  -names().index(r.name))).name
     return out
 
 
@@ -286,7 +342,10 @@ def _owners_key() -> tuple:
             return p.stat().st_mtime_ns
         except OSError:
             return 0
-    return (tuple((n, str(f), mt(f)) for n, f in sorted(_files().items())), mt(geofabrik.index_path()))
+    from forest.fetch import osm_pbf
+    pbfs = sorted(osm_pbf.PBF_DIR.glob("*.osm.pbf*"))   # the files and their tile lists
+    return (tuple((n, str(f), mt(f)) for n, f in sorted(_files().items())), mt(geofabrik.index_path()),
+            tuple((p.name, mt(p), p.stat().st_size) for p in pbfs if p.exists()))
 
 
 def owners() -> dict[str, str]:
