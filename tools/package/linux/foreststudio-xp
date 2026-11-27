@@ -1,0 +1,9 @@
+#!/bin/sh
+# Start ForestStudio XP with the bundled Python (-I: ignores PYTHONPATH and user site-packages).
+# Command line instead of the window:  ./foreststudio-xp cli --help
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+if [ "$1" = "cli" ]; then
+  shift
+  exec "$HERE/python/bin/python3" -I -m forest.cli "$@"
+fi
+exec "$HERE/python/bin/python3" -I -m forest.app.main "$@"

@@ -617,7 +617,7 @@ async function loadCredits() {
       el("td", {}, r.attribution, el("div", { class: "hint" }, `${r.license} · ${r.url}`))));
     return t;
   };
-  box.append(el("h4", {}, "Data"), table(c.data, true), el("h4", {}, "Software"), table(c.software, false));
+  box.append(el("p", {}, el("b", {}, `ForestStudio XP ${c.version}`)), el("h4", {}, "Data"), table(c.data, true), el("h4", {}, "Software"), table(c.software, false));
 }
 
 async function loadAppSettings() {

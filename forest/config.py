@@ -28,6 +28,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULTS_DIR = REPO_ROOT / "config"          # shipped default profiles/ and rules/
+
+
+def program_folders() -> list[Path]:
+    """Folders the program itself lives in (never a place for the data folder): the code folder,
+    and in an installed build (tools/package: <install>/python + <install>/app) the install folder."""
+    out = [REPO_ROOT]
+    if (REPO_ROOT.parent / "python").is_dir() and Path(sys.base_prefix).resolve().is_relative_to(REPO_ROOT.parent.resolve()):
+        out.append(REPO_ROOT.parent)
+    return out
 DEFAULT_DATA_ROOT = Path.home() / ".foreststudio"
 # When the user picks another data folder (Settings), this small file in the default folder
 # remembers where it is. It's the only thing left in the default folder then.

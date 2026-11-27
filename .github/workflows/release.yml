@@ -1,0 +1,151 @@
+name: Release
+
+# Tag v<version> (= forest/__init__.py __version__) → tests → a DRAFT GitHub Release with the release
+# notes from docs/releases/<version>.md → installers for Windows, macOS (arm64 + Intel) and Linux
+# uploaded to it → SHA256SUMS.txt → the release is published. If any build fails it stays a draft.
+# Manual run (workflow_dispatch) or a pull request touching the packaging: the same builds, uploaded
+# as workflow artifacts only (no release).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  # A pull request that touches the packaging builds every installer too (artifacts only), so a
+  # broken build shows up before a tag.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/workflows/tests.yml"
+      - "tools/package/**"
+      - "uv.lock"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a release half-way
+
+env:
+  UV_VERSION: "0.13.10"
+
+jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/tests.yml
+
+  draft:
+    name: Draft release
+    if: github.ref_type == 'tag'
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create the draft release (or reuse it)
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          notes="docs/releases/${version}.md"
+          test -f "$notes" || { echo "::error::$notes is missing: write the release notes first"; exit 1; }
+          grep -q "^__version__ = \"${version}\"" forest/__init__.py \
+            || { echo "::error::tag $TAG doesn't match forest/__init__.py __version__"; exit 1; }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists: reusing it (assets are replaced)."
+            exit 0
+          fi
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac
+          gh release create "$TAG" --draft --verify-tag $pre \
+            --title "ForestStudio XP ${version}" --notes-file "$notes"
+
+  package:
+    name: Package (${{ matrix.name }})
+    needs: [tests, draft]
+    # draft is skipped on a manual run; still build then.
+    if: ${{ !cancelled() && needs.tests.result == 'success' && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write   # gh release upload (tag builds only)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest }
+          - { name: macos-arm64, os: macos-15 }
+          - { name: macos-x86_64, os: macos-15-intel }
+          - { name: linux-x86_64, os: ubuntu-22.04 }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
+
+      - name: Qt WebEngine system libraries (for the smoke test)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxkbfile1 libasound2 libfontconfig1 \
+            libdbus-1-3 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0
+
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+
+      # build.py needs only the standard library and uv; the app's dependencies go into the bundled
+      # Python from uv.lock, not into this one.
+      - name: Build and smoke-test the installer
+        run: uv run --no-project --python 3.13 python tools/package/build.py --out dist --check
+
+      - name: Upload to the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: gh release upload "${{ github.ref_name }}" dist/* --clobber
+
+      - name: Upload workflow artifact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ForestStudio-XP-${{ matrix.name }}
+          path: dist/*
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: package   # every package job must succeed; otherwise the release stays a draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: SHA256SUMS.txt from the per-file checksums, then publish
+        shell: bash
+        run: |
+          mkdir sums && cd sums
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.sha256"
+          cat *.sha256 | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          for f in *.sha256; do gh release delete-asset "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --yes; done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
