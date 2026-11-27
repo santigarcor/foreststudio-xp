@@ -721,6 +721,8 @@ An outside review of the work so far (B1–B3, N1–N8, P1–P8) was agreed with
   - `proxy-tools` (pywebview dep) is sdist-only: the one package allowed to build from source.
   - Inno `lzma2/ultra64` + 4 block threads: "Out of memory" on CI → `lzma2/max` + `LZMAUseSeparateProcess`.
   - The installer aborted (MoveFile code 3) in a long install folder: scipy's test files were the deepest paths. The dependencies' `tests` folders are dropped (tree 385 → 338 MB, longest path 115 characters) and build.py fails above 170 characters (MAX_PATH 260 − ~70 for `C:\Users\<name>\AppData\Local\Programs\ForestStudio XP\`).
-  - The owner's own Start-menu shortcut `ForestStudio XP.lnk` (dev .venv) has the installer's shortcut name: installing replaces it, uninstalling removes it.
-- **Sizes** (first green run, before dropping the tests folders): Windows setup 79 MB, macOS arm64 dmg 101 MB, macOS Intel dmg 108 MB, Linux tar.gz 363 MB. Packed tree on Windows 338 MB.
+  - The owner's own Start-menu shortcut `ForestStudio XP.lnk` (dev .venv) has the installer's shortcut name: installing replaces it, uninstalling removes it (restored from the repo copy after the test).
+  - The `.sha256` files had CRLF on Windows (sha256sum -c fails) → written with LF.
+- **Sizes** (CI, 002606a): Windows setup 69 MB (331 MB installed), macOS arm64 dmg 87 MB, macOS Intel dmg 95 MB, Linux tar.gz 350 MB. Before dropping the tests folders: 79 / 101 / 108 / 363 MB.
+- **Windows install test** (CI-built setup.exe, scratch install folder + scratch `FORESTSTUDIO_HOME`): silent install exit 0; shortcut = `pythonw.exe -I -m forest.app.main` in `app`; the app window opened and, with workers and DSFTool running from the installed tree, no console window appeared; silent uninstall removed the program folder, the Start-menu shortcut and the uninstall registry entry, and left the data folder (6 files) alone; the real `~/.foreststudio` was untouched.
 - Not done: code signing (SmartScreen / Gatekeeper warnings documented in the README), tests on a real Mac/Linux desktop.

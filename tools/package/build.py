@@ -350,7 +350,8 @@ def write_sha256(artifact: Path) -> Path:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     p = artifact.with_name(artifact.name + ".sha256")
-    p.write_text(f"{h.hexdigest()}  {artifact.name}\n", encoding="utf-8")
+    # LF even on Windows: sha256sum -c (and the merged SHA256SUMS.txt) reject CRLF lines.
+    p.write_text(f"{h.hexdigest()}  {artifact.name}\n", encoding="utf-8", newline="\n")
     return p
 
 
