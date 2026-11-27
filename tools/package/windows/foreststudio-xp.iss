@@ -42,9 +42,11 @@ UninstallDisplayName={#AppName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-Compression=lzma2/ultra64
+; lzma2/ultra64 with block threads ran the compiler out of memory on ~385 MB of input (CI,
+; 2026-11-26); max + a separate compressor process fits.
+Compression=lzma2/max
 SolidCompression=yes
-LZMANumBlockThreads=4
+LZMAUseSeparateProcess=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
