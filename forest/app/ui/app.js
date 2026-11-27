@@ -92,11 +92,18 @@ async function fillRegionSelects() {
   go.value = S.regions.includes(keep) ? keep : "";
 }
 
+/* A tile no region's OpenStreetMap file covers (e.g. Panama inside Colombia's box) can't be built:
+   without OSM there are no runway, road or building cut-outs. It can be selected only when it is
+   built or has data, so it can still be deleted. */
+const noOsm = (s) => s && s.osm === false;
+const selectable = (s) => !!s && (!noOsm(s) || s.built || s.cached);
+
 function tileStyle(name) {
   const s = status[name] || {};
   const sel = selected.has(name);
   let color = "#ffffff", weight = 0.6, opacity = 0.18, dash = null;
   if (s.land) { opacity = 0.35; }
+  if (noOsm(s)) { color = "#9a9a9a"; opacity = 0.3; dash = "2 4"; }
   if (s.cached) { color = "#8a7fd6"; opacity = 0.95; dash = null; weight = 1.4; }
   if (s.built) { color = "#3fa0e0"; opacity = 1; weight = 1.8; dash = null; }
   if (s.installed) { color = "#4cc38a"; opacity = 1; weight = 2.2; dash = null; }
@@ -104,7 +111,7 @@ function tileStyle(name) {
   return {
     color, weight, opacity, dashArray: dash,
     fillColor: sel ? "#f5c542" : "#000",
-    fillOpacity: sel ? (map && map.getZoom() >= 8 ? 0.08 : 0.3) : (s.land ? 0.04 : 0.0),
+    fillOpacity: sel ? (map && map.getZoom() >= 8 ? 0.08 : 0.3) : (s.land && !noOsm(s) ? 0.04 : 0.0),
     ...(sel ? { color: "#f5c542", weight: 2.5, opacity: 1, dashArray: null } : {}),
   };
 }
@@ -126,7 +133,7 @@ function drawTiles() {
 function updateLabels() {
   const show = map.getZoom() >= 7;
   for (const [n, m] of Object.entries(labels)) {
-    if (show && (status[n].land || selected.has(n))) m.addTo(map); else map.removeLayer(m);
+    if (show && ((status[n].land && !noOsm(status[n])) || selected.has(n))) m.addTo(map); else map.removeLayer(m);
   }
 }
 
@@ -136,9 +143,10 @@ function onTileClick(name, shift) {
     const b = [parseInt(name.slice(0, 3)), parseInt(name.slice(3))];
     for (let la = Math.min(a[0], b[0]); la <= Math.max(a[0], b[0]); la++)
       for (let lo = Math.min(a[1], b[1]); lo <= Math.max(a[1], b[1]); lo++) {
-        const n = tname(la, lo); if (status[n]) selected.add(n);
+        const n = tname(la, lo); if (selectable(status[n])) selected.add(n);
       }
-  } else if (selected.has(name)) selected.delete(name); else selected.add(name);
+  } else if (selected.has(name)) selected.delete(name);
+  else if (selectable(status[name])) selected.add(name);
   lastClicked = name;
   renderSelection(); drawTiles(); showTileInfo(name);
 }
@@ -186,7 +194,7 @@ function renderForestLegend() {
   box.append(el("div", { class: "r" }, osmSw, el("b", {}, "OSM trees"), "single trees and tree rows from OpenStreetMap"));
   const twSw = el("span", { class: "ramp" }); twSw.style.background = `rgb(${S.overlay.town.join(",")})`;
   box.append(el("div", { class: "r" }, twSw, el("b", {}, "town trees"), "scattered trees in towns"));
-  box.append(el("div", { class: "note" },
+  box.append(el("div", { class: "osmwait" },
     "Colour = biome. Dark → bright = thin → thick forest. Transparent = no trees. "
     + "Shows the forest types as they were at the tile's last build."));
 }
@@ -198,9 +206,28 @@ async function reloadOverlay(name) {
 async function refreshStatus() {
   status = await api().tile_status($("#profile").value);
   dropTiles(status);
+  renderOsmWait();
   await refreshPack();
   drawTiles();
   await refreshOverlays();
+}
+
+/* Regions whose OpenStreetMap file isn't downloaded yet: their tiles can't be selected until it is
+   (the file says which tiles it covers). A fresh install starts here. */
+function renderOsmWait() {
+  const box = $("#osmWait"); box.innerHTML = "";
+  const wait = [...new Set(Object.values(status).flatMap(s => s.osm_wait || []))].sort();
+  for (const n of wait) {
+    const b = el("button", { class: "primary small" }, `Download ${regionLabel(n)}'s map data`);
+    b.onclick = () => busy(b, "Starting…", async () => {
+      const r = await startDataJob("region", [], false, n);
+      msg("#selMsg", r.ok ? "Downloading… its tiles can be selected when it's done (progress in the Build queue)."
+        : r.error, !r.ok);
+    });
+    box.append(el("div", { class: "osmwait" },
+      el("p", { class: "hint" }, `${regionLabel(n)}'s tiles can be selected once its OpenStreetMap file is ` +
+        "downloaded (it tells which tiles have map data)."), b));
+  }
 }
 
 /* ---------------- tiles panel ---------------- */
@@ -324,6 +351,11 @@ async function showTileInfo(name) {
     ["In X-Plane", s.installed ? "yes (pack linked)" : (s.built ? "no — pack not installed" : false)]];
   const info = $("#tileInfo"); info.innerHTML = "";
   info.append(el("div", {}, el("b", {}, name)));
+  if (noOsm(s)) info.append(el("p", { class: "warn" }, (s.osm_wait && s.osm_wait.length)
+    ? `Download ${s.osm_wait.map(regionLabel).join(" / ")}'s OpenStreetMap file first (Data → Regions); then this tile ` +
+      "can be selected if the file covers it."
+    : "No downloaded OpenStreetMap file covers this tile, so it can't be built (no roads, runways or " +
+      "buildings to keep trees off). Add its country in Data → Regions."));
   const t = el("table");
   for (const [k, v] of flags) t.append(el("tr", {}, el("td", {}, k), el("td", {}, typeof v === "string" ? v : v ? "yes" : "–")));
   info.append(t);

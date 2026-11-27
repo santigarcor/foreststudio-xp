@@ -201,4 +201,32 @@ def test_osm_sources_uses_downloaded_files_covering_the_tile(sandbox):
         regions.get(name).osm_file.write_bytes(b"")
     assert [p.name for p in regions.osm_sources(t)] == ["north.osm.pbf", "south.osm.pbf"]
     assert [p.name for p in regions.osm_sources(Tile(0, 0))] == ["south.osm.pbf"]
-    assert [p.name for p in regions.osm_sources(Tile(0, 0), "north")] == ["north.osm.pbf", "south.osm.pbf"]
+    # north's file doesn't cover +00+000, even when north's forest types build it
+    assert [p.name for p in regions.osm_sources(Tile(0, 0), "north")] == ["south.osm.pbf"]
+
+
+def test_tile_no_extract_covers_is_refused(sandbox, monkeypatch):
+    """Colombia's box reaches into Panama (MPTO, +09-080), outside Colombia's extract: reading
+    Colombia's file gave an empty osm.json and a tile with trees on the runways."""
+    from forest import build, regions
+    from forest.fetch import osm as osm_mod
+    from forest.fetch.osm import OsmFileMissing
+
+    d = sandbox.root / "config" / "regions"
+    d.mkdir(parents=True)
+    (d / "south.toml").write_text('bounds = [0, 0, 2, 2]\nosm_url = "https://x/south.osm.pbf"\n', encoding="utf-8")
+    regions.get("south").osm_file.parent.mkdir(parents=True, exist_ok=True)
+    regions.get("south").osm_file.write_bytes(b"")
+    t = Tile(1, 1)
+    monkeypatch.setattr(regions, "_covers", lambda r, tile: tile.name != t.name)   # outline misses t
+    monkeypatch.setattr(regions, "covered_tiles", lambda: frozenset({"+00+000", "+00+001", "+01+000"}))
+    assert regions.osm_files(t) == [] and not regions.osm_covered(t)
+    t.cache.joinpath("osm.json").write_text('{"version": 8, "elements": [\n\n]}', encoding="utf-8")
+    assert not osm_mod.usable_without_country_file(t)                 # the old empty file doesn't count
+    with pytest.raises(OsmFileMissing, match="no region's OpenStreetMap file covers"):
+        osm_mod.fetch_osm(t)
+    with pytest.raises(OsmFileMissing):
+        build.build_tile(t, region="south")
+    stats = {"fingerprint": "x", "profile": "medium", "region": "south", "data": {}}
+    reasons = build.outdated_reasons(stats, t, "medium", "south", fingerprint="x")
+    assert any("no OpenStreetMap file covers" in r for r in reasons)

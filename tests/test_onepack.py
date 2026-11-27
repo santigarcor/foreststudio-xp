@@ -59,6 +59,7 @@ def test_build_tile_uses_the_owner(sandbox, monkeypatch):
         raise RuntimeError("stop")
 
     monkeypatch.setattr(build.Settings, "load", classmethod(fake_load))
+    monkeypatch.setattr(regions, "covered_tiles", lambda: frozenset({"+00+000"}))   # its OSM file is here
     try:
         build.build_tile(Tile(0, 0), profile="medium")
     except RuntimeError:

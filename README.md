@@ -127,11 +127,12 @@ included or downloaded automatically.
 
 1. **Settings**: ForestStudio looks for X-Plane 12 by itself. If it doesn't find it, choose your
    X-Plane 12 folder and press **Save**. The setup checks should then show ✓.
-2. **Build** view: click tiles on the map to select them (shift-click selects a block of tiles). Tiles of
-   all your regions are on the same map and can be built together.
+2. **Build** view: the first time, press **Download Colombia's map data** (the OpenStreetMap country
+   file, ~335 MB; it also tells which tiles have map data). Then click tiles on the map to select them
+   (shift-click selects a block of tiles). Tiles with no map data (grey, dashed) can't be selected: add
+   their country in Data → Regions. Tiles of all your regions are on the same map and can be built together.
    Built tiles outlined in orange are outdated (see below).
-3. Press **Build selected**. The first build also downloads the OpenStreetMap country file and the
-   biome map. Each tile takes about 1–2 minutes once its data is downloaded. Follow progress in the
+3. Press **Build selected**. The first build also downloads the biome map. Each tile takes about 1–2 minutes once its data is downloaded. Follow progress in the
    **Build queue**.
 4. Press **Install pack in X-Plane** (once). This adds a single folder link,
    `Custom Scenery/forest_studio_xp`, that points to your built tiles (all regions). Every tile you build

@@ -216,6 +216,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .sw.inst { border-color: var(--inst); } .sw.built { border-color: var(--built); }
 .sw.outdated { border-color: var(--outdated); }
 .sw.cached { border-color: var(--cached); }
+.sw.noosm { border: 2px dashed #9a9a9a; }
 .tilelabel { color: #fff; font: 600 11px Consolas, monospace; text-shadow: 0 0 3px #000, 0 0 2px #000;
   background: none; border: 0; white-space: nowrap; }
 .leaflet-container { font: inherit; }
@@ -264,3 +265,4 @@ a.link:hover { text-decoration: underline; }
 .regprog .progress { margin: 0; }
 .regprog .progress.indet div { opacity: .45; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .15; } }
+.osmwait { margin: 6px 0 10px; } .osmwait .hint { margin: 0 0 6px; }

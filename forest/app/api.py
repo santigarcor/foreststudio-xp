@@ -77,6 +77,8 @@ class Api:
 
         self.migration = migrate.run()   # one-time: old in-repo cache/out/settings -> ~/.foreststudio
         self.migration += migrate.run_packs()   # one-time: per-region packs -> the one pack
+        from forest.fetch import osm_tiles
+        self.migration += osm_tiles.ensure_all()   # tile lists for OSM files downloaded by older versions
         self.job = Job()
         jobs.mark_interrupted()     # jobs left "running" by a closed app
         self.reload()
@@ -280,6 +282,7 @@ class Api:
         gs = xp / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"
         linked = pack_status()["installed"]
         out: dict[str, dict] = {}
+        covered = regions.covered_tiles()
         for name, region in regions.owners().items():
             t = Tile.parse(name)
             c = CACHE / t.name
@@ -288,6 +291,7 @@ class Api:
             s = {
                 "region": region,
                 "land": (gs / t.folder / f"{t.name}.dsf").exists(),
+                "osm": t.name in covered,   # in a downloaded OSM file's tile list (else not buildable)
                 "cached": (c / "worldcover.tif").exists() and (c / "osm.json").exists(),
                 "built": built,
                 "installed": built and linked,
@@ -300,6 +304,8 @@ class Api:
                                   ("estimated_trees", "forest_km2", "polygons", "budget_scale", "profile", "seconds")}
                 except (OSError, ValueError):
                     j = None
+            if not s["osm"]:
+                s["osm_wait"] = regions.waiting_for_download(t)   # regions to download first
             fp = fp_of(region) if built else None
             if fp:
                 s["outdated"] = outdated_reasons(j, t, profile, region, fp)
@@ -542,6 +548,13 @@ class Api:
         outside = [x for x in names if x not in own]
         if outside:
             return {"ok": False, "error": f"no region covers {', '.join(outside)}: add it in Data → Regions"}
+        # Tiles no region's OSM file covers (e.g. Panama inside Colombia's box): built without
+        # runways, roads or buildings they had trees everywhere (MPTO, 2026-11-27).
+        covered = regions.covered_tiles()
+        no_osm = [x for x in names if x not in covered]
+        if no_osm:
+            return {"ok": False, "error": f"{', '.join(no_osm)}: no OpenStreetMap file covers this tile. "
+                                          "Add its country in Data → Regions, or unselect it."}
         # Sea-only tiles: X-Plane has no base-mesh tile there (no elevation, often no satellite map
         # either), so the build could only fail with a cryptic download error.
         gs = self.cfg.xplane_root / "Global Scenery" / "X-Plane 12 Global Scenery" / "Earth nav data"

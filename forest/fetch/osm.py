@@ -29,9 +29,11 @@ def missing_message(tile: Tile, region: str | None = None) -> str:
 def usable_without_country_file(tile: Tile) -> bool:
     """The tile's osm.json is in the current format, so it can be built even though no country
     file is downloaded (e.g. deleted to save space). Old files without a version (the former
-    Overpass fallback) don't count."""
+    Overpass fallback) don't count, nor does a tile no region's extract covers (its osm.json was
+    written empty when the region's own file was read for it)."""
+    from forest import regions
     from forest.fetch.osm_pbf import is_current
-    return is_current(tile)
+    return regions.osm_covered(tile) and is_current(tile)
 
 
 def fetch_osm(tile: Tile, region: str | None = None) -> Path:

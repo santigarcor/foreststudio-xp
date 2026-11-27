@@ -8,7 +8,6 @@ there; nothing else is sent to Geofabrik. Outlines tell which 1° tiles an extra
 from __future__ import annotations
 
 import json
-import math
 from functools import lru_cache
 from pathlib import Path
 
@@ -83,23 +82,14 @@ def by_file_name() -> dict[str, dict]:
 
 @lru_cache(maxsize=64)
 def _shares(eid: str, index: str, mtime_ns: int) -> dict[str, float]:
-    from shapely.geometry import box, shape
-    from shapely.prepared import prep
+    from shapely.geometry import shape
 
-    from forest.tiles import Tile
+    from forest.fetch.osm_tiles import shares_of
 
     g = shape(entries()[eid]["geometry"])
     if not g.is_valid:
         g = g.buffer(0)
-    pg = prep(g)
-    w, s, e, n = g.bounds
-    out = {}
-    for lat in range(math.floor(s), math.ceil(n)):
-        for lon in range(math.floor(w), math.ceil(e)):
-            b = box(lon, lat, lon + 1, lat + 1)
-            if -90 <= lat < 90 and -180 <= lon < 180 and pg.intersects(b):
-                out[Tile(lat, lon).name] = round(g.intersection(b).area, 6)
-    return out
+    return shares_of(g)
 
 
 def tile_shares(eid: str) -> dict[str, float]:

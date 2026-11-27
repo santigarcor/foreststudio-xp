@@ -6,6 +6,16 @@ All notable changes to ForestStudio XP are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Tiles inside a region's map box but outside its OpenStreetMap file (Panama in Colombia's box, e.g.
+  Tocumen MPTO) were built without any OSM data: trees on runways, roads and buildings. They are now
+  refused with "add its country in Data → Regions", and tiles already built that way show as outdated.
+- The map only enables tiles that a downloaded OpenStreetMap file covers. Each file's tile list is
+  saved when it downloads (from Geofabrik's outline of the extract) and made on start for files
+  downloaded before. Other tiles are greyed out and can't be selected (unless built or with data, so
+  they can be deleted). A region whose file isn't downloaded yet shows a "Download …'s map data"
+  button in the Tiles tab; Tile info says which country to add.
+
 ## [0.1.0] - 2026-11-27
 
 First public release.

@@ -113,7 +113,7 @@ that changes lives in `config.DATA_ROOT` (`%USERPROFILE%/.foreststudio`):
 | `config/regions/*.toml` | the user's own regions (optional; a file with a shipped region's name replaces it) |
 | `config/profiles/*.toml`, `config/rules/*.toml` | the user's profiles / forest types; missing files are copied from the repo defaults on first use (`config.ensure_user_config`, never overwrites) |
 | `config/catalog_xp12.json` | forest catalog generated from this X-Plane |
-| `cache/` | `tiles/<tile>/`, `osm/` (country .pbf), `ecoregions/`, `jobs/`, `history.jsonl`, `backups/`, `decoded/` |
+| `cache/` | `tiles/<tile>/`, `osm/` (country .pbf + `<pbf>.json` meta + `<pbf>.tiles.json` tile list), `ecoregions/`, `jobs/`, `history.jsonl`, `backups/`, `decoded/` |
 | `out/` | `forest_studio_xp/` (THE pack, every region's tiles, junction target) and `studio/` (overlays, stats) |
 
 Use `config.CACHE_ROOT / OUT_ROOT / USER_CONFIG / profile_path() / rules_path()`; never write under
@@ -180,6 +180,11 @@ forest/
                    coordinates via osmium's WKB factory + numpy, not one Python object per node
                    (`_way_slow` = the old per-node path, fallback). Colombia 5 tiles 146 → 62 s,
                    Florida 324 → 144 s. Tiles built from it are byte-identical (DSF text, PNGs)
+    osm_tiles.py   `<pbf>.tiles.json` = the tiles a downloaded OSM file covers (tile → share), from the
+                   extract's Geofabrik .poly (…/colombia.poly) or the index outline if it's here; written
+                   on download/update (tasks.list_osm_tiles) and on start for older downloads
+                   (`ensure_all`, app + CLI; offline → retried next start); kept when the .pbf is
+                   deleted, removed with the region. THE source of what the map enables
     osm.py         fetch_osm: the downloaded country file(s) only; no online fallback (Overpass was
                    removed 2026-11-24). No file → the tile's current-VERSION osm.json if any, else
                    OsmFileMissing ("Download it in Data → Regions"); that tile's Data step fails
@@ -504,7 +509,17 @@ keeps its old box so tiles stay identical), `osm_url` (Geofabrik `.osm.pbf`), `e
   Template biomes carry `climate = true`; regions without shipped rules whose file predates it get it
   from the template by biome name (`build.fill_rule_defaults`); `climate` is written only when present.
 - **Border tiles**: `regions.osm_sources(tile, region)` = every downloaded extract whose Geofabrik
-  outline (or, without the index, region tiles) covers the tile, plus the building region's own.
+  outline (or, without the index, region tiles) covers the tile — **not** the building region's own
+  file when its outline misses the tile (2026-11-27: Colombia's box reaches into Panama; +08/+09-079/080
+  got an empty osm.json → trees on MPTO's runways). A tile no extract covers fails its Data step,
+  `build_tile` and `Api.start_build` refuse it, a tile built that way shows as outdated, and the map
+  draws it grey-dashed and won't select it unless it is built or has data (deletable).
+  **Enabled tiles = `regions.covered_tiles()`** (cached) = the union of the downloaded files' tile
+  lists (`fetch/osm_tiles.py`); a downloaded file without a list yet falls back to the index outline /
+  region tiles; a region whose file isn't downloaded enables nothing (`tile_status` → `osm`,
+  `osm_wait` = regions to download; the Tiles tab shows "Download <region>'s map data" — a fresh
+  install starts there). `_covers` / `_share` / owners use the same lists; a known outline beats a
+  region's box in ownership.
   `extract_tiles` makes one pass per file into shared writers, dedupes by (type, id) when there are
   several files, and records `"sources"` in the osm.json header (single-file tiles keep the old
   header); `is_current(tile, sources)` re-extracts when the set of files changes (adding Panama

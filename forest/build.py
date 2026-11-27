@@ -1007,6 +1007,10 @@ def outdated_reasons(stats: dict | None, tile: Tile, profile: str, region: str,
     changed = [n for n, t in now.items() if old.get(n) and t > old[n] + 1]
     if changed:
         reasons.append("newer data: " + ", ".join(sorted(changed)))
+    from forest import regions
+    if not regions.osm_covered(tile):
+        reasons.append("no OpenStreetMap file covers this tile (built without roads, runways or "
+                       "buildings); add its country in Data → Regions")
     return reasons
 
 
@@ -1017,6 +1021,10 @@ def build_tile(tile: Tile, profile: str = "medium", region: str | None = None) -
     from forest import regions
     from forest.paths import studio_path
     region = region or regions.owner(tile) or regions.default_name()
+    if not regions.osm_covered(tile):
+        # Without OSM there are no runway, road, building or water cut-outs: trees everywhere.
+        from forest.fetch.osm import OsmFileMissing, missing_message
+        raise OsmFileMissing(missing_message(tile, region))
     t0 = time.time()
     s = Settings.load(profile, region)
     c = classify(tile, s, t0)

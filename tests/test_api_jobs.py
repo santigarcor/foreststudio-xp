@@ -146,3 +146,16 @@ def test_a_country_builds_while_another_country_file_is_read(sandbox, monkeypatc
     a._run(names, "medium", owners, workers=2)
     assert seen.index(("end", "build", "+30-082")) < seen.index(("end", "fetch", "+06-076"))
     assert peak[0] <= 2 and sorted(a.job.done) == names and not a.job.running
+
+
+def test_start_build_refuses_tiles_no_osm_file_covers(sandbox, monkeypatch):
+    """Panama tiles inside Colombia's box (MPTO): no OSM file covers them, so no build."""
+    from forest import regions
+
+    a = _api()
+    monkeypatch.setattr(a, "_xplane_missing", lambda: None, raising=False)
+    monkeypatch.setattr(regions, "owners", lambda: {"+06-076": "colombia", "+09-080": "colombia"})
+    monkeypatch.setattr(regions, "covered_tiles", lambda: frozenset({"+06-076"}))
+    r = a.start_build(["+06-076", "+09-080"], "medium")
+    assert not r["ok"] and "+09-080" in r["error"] and "+06-076" not in r["error"]
+    assert "Data → Regions" in r["error"]
