@@ -171,6 +171,25 @@ def trim_python(home: Path) -> None:
             shutil.rmtree(p) if p.is_dir() else p.unlink()
     for p in list(home.rglob("__pycache__")):
         shutil.rmtree(p, ignore_errors=True)
+    # The packages' own test suites (scipy, numpy, shapely, pyproj…): never imported by the app,
+    # tens of MB, and the deepest paths in the tree (Windows' 260-character limit, see check_paths).
+    site = lib / "site-packages"
+    for p in sorted(site.rglob("tests"), key=lambda q: len(q.parts)):
+        if p.is_dir() and p.exists():
+            shutil.rmtree(p)
+
+
+# Windows refuses paths over 260 characters (MAX_PATH): the installer aborts. The default install
+# folder is C:\Users\<name>\AppData\Local\Programs\ForestStudio XP\ (~70 characters with a 20-letter
+# user name), so paths inside the package must stay well under 260 - 70.
+MAX_REL_PATH = 170
+
+
+def check_paths(root: Path) -> None:
+    longest = max((str(f.relative_to(root)) for f in root.rglob("*")), key=len)
+    log(f"longest path in the package: {len(longest)} characters")
+    if len(longest) > MAX_REL_PATH:
+        sys.exit(f"path too long for Windows installs ({len(longest)} > {MAX_REL_PATH}): {longest}")
 
 
 def write_pth(site: Path, home: Path) -> None:
@@ -362,6 +381,7 @@ def main() -> None:
         stage_app(root / "app", xp_dir)
         compile_all(py, root)
         log(f"packed tree: {tree_mb(root):.0f} MB")
+        check_paths(root)
         if args.check:
             smoke(py, root, work)
         if system == "windows":
